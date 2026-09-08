@@ -1,3 +1,7 @@
+<!DOCTYPE html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Шестой класс по дням</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,6 +35,9 @@
 body{margin:0;background-color:var(--paper);
 background-image:repeating-linear-gradient(0deg,var(--grid-line) 0 1px,transparent 1px 23px),repeating-linear-gradient(90deg,var(--grid-line) 0 1px,transparent 1px 23px);
 background-position:0 -1px;color:var(--ink);font-family:"Golos Text","Segoe UI",system-ui,sans-serif;font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+/* Обязательно с !important: фильтры прячут уроки через атрибут hidden, а .ls, .day
+   и section задают свой display и перебили бы служебное правило браузера. */
+[hidden]{display:none!important}
 .page{max-width:1280px;margin:0 auto;padding:40px 22px 72px;display:flex;flex-direction:column;gap:34px}
 a{color:var(--pen)}
 :focus-visible{outline:2px solid var(--pen);outline-offset:2px}
