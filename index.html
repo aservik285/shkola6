@@ -128,6 +128,9 @@
     display:inline-flex;align-items:center}
   .links a:active{opacity:.7}
   .card.done .links a{opacity:.5}
+  /* файлы урока: название открывает, «Скачать» — сохраняет */
+  .links.files a{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .links.files a.dl{background:transparent;box-shadow:inset 0 0 0 1px var(--pen-soft)}
 
   .rgt{text-align:right;display:flex;flex-direction:column;gap:3px;align-items:flex-end}
   .tm{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -202,21 +205,33 @@
      titles  — изменённые названия уроков из ленты:   { "mat:7": "…" }
      added   — добавленные уроки:                     { "x:…": { s: "mat", t: "…" } }
      deleted — удалённые уроки из ленты:              { "rus:9": true }
+     files   — файлы урока:                           { "mat:7": [{ p, n, s, t, at, g }] }
+               p — путь в хранилище, n — имя для людей, s — размер в байтах,
+               t — тип, at — когда прикреплён, g — 1, если задание подготовил Claude
 
    Идентификатор урока из ленты — «предмет:номер». Это тот же ключ, по которому
    лежат отметки учеников, поэтому отметка переезжает вместе с уроком.
 
-   Читать правки может любой. Записывать — только родитель: это проверяет база,
-   а не страница, поэтому пароля здесь нет. */
+   Читать правки и открывать файлы может любой. Записывать — только родитель
+   (и учётная запись генератора заданий): это проверяет база, а не страница,
+   поэтому паролей здесь нет. */
 (function (root) {
   "use strict";
+
+  var KEYS = ["days", "titles", "added", "deleted", "files"];
+  var BUCKET = "lesson-files";
 
   function has(o, k) { return !!o && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k); }
   function obj(x) { return (x && typeof x === "object" && !Array.isArray(x)) ? x : {}; }
 
+  /* Незнакомые ключи сохраняем: иначе страница старой версии, записав правки,
+     стёрла бы то, что добавила более новая. */
   function norm(e) {
     e = obj(e);
-    return { days: obj(e.days), titles: obj(e.titles), added: obj(e.added), deleted: obj(e.deleted) };
+    var out = {};
+    Object.keys(e).forEach(function (k) { out[k] = e[k]; });
+    KEYS.forEach(function (k) { out[k] = obj(e[k]); });
+    return out;
   }
 
   function clone(e) { return JSON.parse(JSON.stringify(norm(e))); }
@@ -255,6 +270,27 @@
 
   function newId() { return "x:" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
+  /* ── Файлы урока: Supabase Storage, корзина lesson-files, открыта на чтение ── */
+  function filesOf(edits, id) {
+    var f = norm(edits).files[id];
+    if (!Array.isArray(f)) return [];
+    return f.filter(function (x) { return x && typeof x.p === "string" && x.p && typeof x.n === "string"; });
+  }
+
+  /* name — если задано, ссылка отдаёт файл на скачивание под этим именем */
+  function fileUrl(cfg, path, name) {
+    var api = String(cfg.url).replace(/\/+$/, "");
+    var u = api + "/storage/v1/object/public/" + BUCKET + "/" + String(path).split("/").map(encodeURIComponent).join("/");
+    return name ? u + "?download=" + encodeURIComponent(name) : u;
+  }
+
+  function sizeText(b) {
+    b = +b || 0;
+    if (b < 1024) return b + " Б";
+    if (b < 1024 * 1024) return Math.round(b / 1024) + " КБ";
+    return (Math.round(b / 1024 / 1024 * 10) / 10).toString().replace(".", ",") + " МБ";
+  }
+
   /* { edits, at } — правки есть; { missing: true } — таблица ещё не заведена. */
   function fetchEdits(cfg) {
     var api = String(cfg.url).replace(/\/+$/, "");
@@ -272,7 +308,8 @@
   }
 
   root.PlanEdits = { has: has, norm: norm, clone: clone, effective: effective,
-                     timeAt: timeAt, newId: newId, fetchEdits: fetchEdits };
+                     timeAt: timeAt, newId: newId, fetchEdits: fetchEdits,
+                     BUCKET: BUCKET, filesOf: filesOf, fileUrl: fileUrl, sizeText: sizeText };
 })(window);
 
 </script>
@@ -497,6 +534,27 @@
         lr.appendChild(a);
       });
       mid.appendChild(lr);
+    }
+
+    /* Файлы, прикреплённые родителем: открыть в браузере или скачать.
+       Тап по ссылке урок не отмечает. */
+    var files = (PE && sb) ? PE.filesOf(EDITS, id) : [];
+    if (files.length) {
+      var fr = document.createElement("div");
+      fr.className = "links files";
+      files.forEach(function (f) {
+        var open = document.createElement("a");
+        open.href = PE.fileUrl(CFG, f.p); open.target = "_blank"; open.rel = "noopener";
+        open.textContent = f.n; open.title = "Открыть · " + PE.sizeText(f.s);
+        var dl = document.createElement("a");
+        dl.href = PE.fileUrl(CFG, f.p, f.n); dl.className = "dl"; dl.textContent = "Скачать";
+        dl.setAttribute("aria-label", "Скачать " + f.n);
+        [open, dl].forEach(function (x) {
+          x.addEventListener("click", function (e) { e.stopPropagation(); });
+          fr.appendChild(x);
+        });
+      });
+      mid.appendChild(fr);
     }
 
     var rgt = document.createElement("div");
