@@ -335,8 +335,9 @@ body{background:#fff}
 (function (root) {
   "use strict";
 
-  var KEYS = ["days", "titles", "added", "deleted", "files"];
-  var BUCKET = "lesson-files";
+  var KEYS = ["days", "titles", "added", "deleted", "files", "keys"];
+  var BUCKET = "lesson-files";      /* задания: корзина открыта на чтение, их видят ученики */
+  var KEYBUCKET = "lesson-keys";    /* ответы: корзина закрыта, ссылка выдаётся только после входа */
 
   function has(o, k) { return !!o && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k); }
   function obj(x) { return (x && typeof x === "object" && !Array.isArray(x)) ? x : {}; }
@@ -387,12 +388,16 @@ body{background:#fff}
 
   function newId() { return "x:" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-  /* ── Файлы урока: Supabase Storage, корзина lesson-files, открыта на чтение ── */
-  function filesOf(edits, id) {
-    var f = norm(edits).files[id];
+  /* ── Файлы урока ──
+     files — задания, лежат в открытой корзине и показываются всем;
+     keys  — ответы для родителя, лежат в закрытой корзине и в плане не отображаются. */
+  function listOf(edits, slot, id) {
+    var f = norm(edits)[slot][id];
     if (!Array.isArray(f)) return [];
     return f.filter(function (x) { return x && typeof x.p === "string" && x.p && typeof x.n === "string"; });
   }
+  function filesOf(edits, id) { return listOf(edits, "files", id); }
+  function keysOf(edits, id) { return listOf(edits, "keys", id); }
 
   /* name — если задано, ссылка отдаёт файл на скачивание под этим именем */
   function fileUrl(cfg, path, name) {
@@ -426,7 +431,8 @@ body{background:#fff}
 
   root.PlanEdits = { has: has, norm: norm, clone: clone, effective: effective,
                      timeAt: timeAt, newId: newId, fetchEdits: fetchEdits,
-                     BUCKET: BUCKET, filesOf: filesOf, fileUrl: fileUrl, sizeText: sizeText };
+                     BUCKET: BUCKET, KEYBUCKET: KEYBUCKET,
+                     filesOf: filesOf, keysOf: keysOf, fileUrl: fileUrl, sizeText: sizeText };
 })(window);
 
 </script>
@@ -449,7 +455,7 @@ body.pe-on .pe-add{display:block;appearance:none;margin:6px 8px 8px;border:1px d
   background:transparent;color:var(--red);font:600 12px/1 "Golos Text",sans-serif;padding:9px 8px;border-radius:4px;cursor:pointer}
 body.pe-on .pe-add:hover{background:var(--red-soft)}
 .badge.b-add{background:var(--red-soft);color:var(--red)}
-/* файлы урока прямо в клетке дня */
+/* файлы урока прямо в клетке дня; ответы для родителя здесь не показываются никогда */
 .ls .tp .pe-files{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px}
 .ls .tp .pe-files a{font-size:11px;font-weight:600;color:var(--pen);border-bottom:0;text-decoration:none;
   max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -462,6 +468,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 .pe form{margin:0;padding:18px;display:flex;flex-direction:column;gap:12px}
 .pe h2{margin:0;font:700 17px/1.25 "Golos Text",sans-serif}
 .pe h3{margin:0;font:700 14px/1.25 "Golos Text",sans-serif}
+.pe h3 .lock{font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--red);margin-left:6px}
 .pe .hint{margin:0;font-size:12.5px;line-height:1.4;color:var(--ink-muted);font-weight:400}
 .pe label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--ink-2);min-width:0}
 .pe input,.pe select,.pe textarea{font:15px/1.35 "Golos Text",sans-serif;color:var(--ink);background:var(--sheet-2);
@@ -471,6 +478,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 .pe .two{display:grid;grid-template-columns:2fr 1fr;gap:10px}
 @media (max-width:420px){.pe .two{grid-template-columns:1fr}}
 .pe .sec{border-top:1px solid var(--rule);padding-top:14px;display:flex;flex-direction:column;gap:9px}
+.pe .sec.keys{border-top:1px solid var(--red-line,var(--rule))}
 .pe .err{margin:0;font-size:13px;color:var(--red)}
 .pe .ok{margin:0;font-size:13px;color:var(--pen)}
 .pe .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -535,7 +543,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     </div>
 
     <div class="sec" id="peFilesSec">
-      <h3>Файлы урока</h3>
+      <h3>Файлы урока <span class="lock">видят ученики</span></h3>
       <p class="hint">Прикрепляются и удаляются сразу, кнопка «Сохранить» для этого не нужна. Ученики открывают и скачивают их в плане и в «Ленте уроков». Не больше 20 МБ на файл. Файлы доступны всем, у кого есть ссылка на план, — личные документы сюда не кладите.</p>
       <ul class="pe-list" id="peFileList"></ul>
       <label>Прикрепить файлы<input type="file" id="peFileInput" multiple></label>
@@ -543,18 +551,27 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       <p class="err" id="peFileErr" hidden></p>
     </div>
 
+    <div class="sec keys" id="peKeysSec">
+      <h3>Ответы <span class="lock">только для родителя</span></h3>
+      <p class="hint">Лежат в закрытой части хранилища: без входа в режим родителя их не открыть и по ссылке. Ученикам они не показываются ни в плане, ни в ленте. Ссылка на просмотр действует пять минут.</p>
+      <ul class="pe-list" id="peKeyList"></ul>
+      <label>Прикрепить ответы<input type="file" id="peKeyInput" multiple></label>
+      <p class="ok" id="peKeyState" hidden></p>
+      <p class="err" id="peKeyErr" hidden></p>
+    </div>
+
     <div class="sec" id="peGenSec">
       <h3>Задание от Claude</h3>
-      <p class="hint">Запрос уходит в очередь. Claude подготовит задание по теме урока, проверит ответы, соберёт PDF и прикрепит его к этому уроку — он появится в «Файлах урока».</p>
+      <p class="hint">Запрос уходит в очередь. Claude подготовит задание по теме урока, проверит ответы и соберёт два файла: задание для учеников и ответы для вас. Задание появится в «Файлах урока», ответы — в разделе выше.</p>
       <label>Пожелания, если есть
-        <textarea id="peWish" rows="2" placeholder="Например: больше текстовых задач, на полторы страницы, с ответами для родителя"></textarea>
+        <textarea id="peWish" rows="2" placeholder="Например: больше текстовых задач, на полторы страницы"></textarea>
       </label>
       <div class="acts"><button type="button" id="peGen">Запросить задание</button><span class="sp"></span></div>
       <ul class="pe-list" id="peReqList" hidden></ul>
       <p class="ok" id="peGenState" hidden></p>
       <p class="err" id="peGenErr" hidden></p>
     </div>
-    <p class="hint" id="peNewHint" hidden>Файлы и задания можно добавить, когда урок сохранён.</p>
+    <p class="hint" id="peNewHint" hidden>Файлы, ответы и задания можно добавить, когда урок сохранён.</p>
   </form>
 </dialog>
 
@@ -570,10 +587,16 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 
 <script>
 /* Режим родителя в «Шестом классе по дням»: перенос, добавление, удаление и переименование уроков,
-   файлы урока и запросы на задания.
+   файлы урока, ответы для родителя и запросы на задания.
+
    Пароль в странице не хранится и не проверяется: вход идёт в Supabase Auth, а записывать
    правки, загружать файлы и ставить запросы база разрешает только учётной записи родителя
-   (политики RLS на plan_edits, task_requests и хранилище lesson-files).
+   (политики RLS на plan_edits, task_requests и корзинах хранилища).
+
+   Задания лежат в открытой корзине lesson-files — их видят ученики.
+   Ответы лежат в закрытой корзине lesson-keys: без входа она не отдаёт файл,
+   а в режиме родителя страница просит у базы временную ссылку на пять минут.
+
    Сеанс живёт, пока открыта страница: после перезагрузки пароль спрашивается снова. */
 (function () {
   "use strict";
@@ -634,7 +657,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     var t = el.querySelector(".tt"), want = titleOf(id);
     if (t && t.textContent !== want) t.textContent = want;
 
-    /* Файлы урока — ссылками под названием: видят все, без входа */
+    /* Только задания: ответы для родителя сюда не попадают никогда */
     var box = el.querySelector(".pe-files"), files = canRead ? PE.filesOf(EDITS, id) : [];
     if (!files.length) { if (box) box.parentNode.removeChild(box); }
     else {
@@ -778,8 +801,9 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     if (m === "login" || st === 401) return "Сеанс истёк — войдите в режим родителя снова.";
     if (m === "upload") {
       if (st === 413) return "Файл слишком большой для хранилища.";
-      return "Файл не загрузился (код " + st + "). Проверьте, что хранилище lesson-files настроено в Supabase.";
+      return "Файл не загрузился (код " + st + "). Проверьте, что корзины lesson-files и lesson-keys настроены в Supabase.";
     }
+    if (m === "sign") return "Не удалось открыть ответы (код " + st + "). Проверьте корзину lesson-keys и её правила.";
     if (m === "request") return "Запрос не отправился (код " + st + "). Проверьте, что таблица task_requests настроена в Supabase.";
     if (m === "denied" || st === 403) return "База не разрешила запись. Проверьте учётную запись родителя в Supabase.";
     if (m === "missing") return "В базе нет таблицы plan_edits — правки не настроены.";
@@ -810,7 +834,16 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 
   function setEditing(on) {
     editing = on;
-    if (!on) session = null;
+    if (!on) {
+      session = null;
+      /* Окно урока закрыто, но его содержимое осталось бы в разметке: чистим за собой,
+         чтобы имена файлов с ответами не лежали в странице после выхода. */
+      if (lessonDlg && lessonDlg.open) lessonDlg.close();
+      if (delDlg && delDlg.open) delDlg.close();
+      cur = null;
+      [fileList, keyList, reqList, delList].forEach(function (el) { if (el) el.innerHTML = ""; });
+      if (reqList) reqList.hidden = true;
+    }
     document.body.classList.toggle("pe-on", on);
     loginBtn.setAttribute("aria-pressed", on ? "true" : "false");
     loginBtn.textContent = on ? "Режим родителя включён" : "Режим родителя";
@@ -900,10 +933,12 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     fillDays(eff, d); fillPos(eff, d, id);
     daySel.onchange = function () { fillPos(eff, daySel.value, id); };
 
-    byId("peFilesSec").hidden = !id; byId("peGenSec").hidden = !id; byId("peNewHint").hidden = !!id;
-    showErr(fileErr, ""); showErr(fileState, ""); showErr(genErr, ""); showErr(genState, "");
+    byId("peFilesSec").hidden = !id; byId("peKeysSec").hidden = !id;
+    byId("peGenSec").hidden = !id; byId("peNewHint").hidden = !!id;
+    showErr(fileErr, ""); showErr(fileState, ""); showErr(keyErr, ""); showErr(keyState, "");
+    showErr(genErr, ""); showErr(genState, "");
     wishEl.value = "";
-    if (id) { fillFiles(id); loadRequests(id); }
+    if (id) { fillFiles(id); fillKeys(id); loadRequests(id); }
 
     lessonDlg.showModal();
     if (!id) subjSel.focus(); else nameEl.focus();
@@ -972,10 +1007,79 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       .then(function () { delBtn.disabled = false; });
   });
 
-  /* ── Файлы урока ──
-     Сначала файл уходит в хранилище, потом запись о нём — в правки плана.
+  /* ── Файлы урока и ответы ──
+     Сначала файл уходит в корзину, потом запись о нём — в правки плана.
      Не записалось в правки — загруженный файл удаляем, чтобы не висел без урока. */
   var fileList = byId("peFileList"), fileInput = byId("peFileInput"), fileState = byId("peFileState"), fileErr = byId("peFileErr");
+  var keyList = byId("peKeyList"), keyInput = byId("peKeyInput"), keyState = byId("peKeyState"), keyErr = byId("peKeyErr");
+
+  function safeExt(name) { var m = /\.([A-Za-z0-9]{1,8})$/.exec(name || ""); return m ? "." + m[1].toLowerCase() : ""; }
+  /* Ключ объекта — только латиница и цифры: кириллицу хранилище в ключах не принимает.
+     Имя с кириллицей хранится в правках плана. */
+  function objectPath(id, name) {
+    return id.replace(/[^A-Za-z0-9_-]/g, "_") + "/" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + safeExt(name);
+  }
+  function objectUrl(bucket, path) { return API + "/storage/v1/object/" + bucket + "/" + path.split("/").map(encodeURIComponent).join("/"); }
+  function removeObject(bucket, path) {
+    return token().then(function (at) {
+      return fetch(objectUrl(bucket, path), { method: "DELETE", headers: authHeaders(at, null) });
+    }).catch(function () {});
+  }
+
+  function uploadInto(bucket, slot, id, file) {
+    var path = objectPath(id, file.name);
+    return token().then(function (at) {
+      return fetch(objectUrl(bucket, path), {
+        method: "POST",
+        headers: authHeaders(at, { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false", "cache-control": "3600" }),
+        body: file
+      });
+    }).then(function (r) {
+      if (!r.ok) { var e = new Error("upload"); e.status = r.status; throw e; }
+      var meta = { p: path, n: file.name, s: file.size, t: file.type || "", at: new Date().toISOString() };
+      return mutate(function (e) {
+        var list = Array.isArray(e[slot][id]) ? e[slot][id] : [];
+        list.push(meta);
+        e[slot][id] = list;
+      }).catch(function (err) { removeObject(bucket, path); throw err; });
+    });
+  }
+
+  function pickHandler(input, bucket, slot, stateEl, errEl, refill) {
+    input.addEventListener("change", function () {
+      if (!cur || !cur.id || !input.files || !input.files.length) return;
+      var id = cur.id, files = Array.prototype.slice.call(input.files);
+      showErr(errEl, ""); showErr(stateEl, "");
+      var big = files.filter(function (f) { return f.size > MAX_MB * 1024 * 1024; });
+      if (big.length) { showErr(errEl, "«" + big[0].name + "» больше " + MAX_MB + " МБ — такой файл не прикрепить."); input.value = ""; return; }
+      input.disabled = true;
+      var done = 0;
+      showErr(stateEl, "Загружаю " + files.length + (files.length === 1 ? " файл…" : " файла…"));
+      files.reduce(function (p, f) {
+        return p.then(function () {
+          return uploadInto(bucket, slot, id, f).then(function () { done++; showErr(stateEl, "Загружено " + done + " из " + files.length); refill(id); });
+        });
+      }, Promise.resolve()).then(function () {
+        showErr(stateEl, done === 1 ? "Файл прикреплён." : "Файлы прикреплены: " + done + ".");
+        toast(done === 1 ? "Файл прикреплён" : "Прикреплено файлов: " + done);
+      }, function (err) {
+        showErr(stateEl, done ? "Успели прикрепить: " + done + "." : "");
+        afterFail(err, errEl, lessonDlg);
+      }).then(function () { input.disabled = false; input.value = ""; if (cur && cur.id === id) refill(id); });
+    });
+  }
+
+  function removeFrom(bucket, slot, id, f, btn, errEl, refill) {
+    if (!window.confirm("Удалить файл «" + f.n + "»?")) return;
+    btn.disabled = true; showErr(errEl, "");
+    mutate(function (e) {
+      var list = (Array.isArray(e[slot][id]) ? e[slot][id] : []).filter(function (x) { return !x || x.p !== f.p; });
+      if (list.length) e[slot][id] = list; else delete e[slot][id];
+    }).then(function () {
+      removeObject(bucket, f.p);
+      refill(id); toast("Файл удалён");
+    }, function (err) { btn.disabled = false; afterFail(err, errEl, lessonDlg); });
+  }
 
   function fillFiles(id) {
     fileList.innerHTML = "";
@@ -992,79 +1096,72 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       sp.appendChild(a); sp.appendChild(sm);
       var dl = document.createElement("a"); dl.href = PE.fileUrl(CFG, f.p, f.n); dl.textContent = "Скачать";
       var rm = document.createElement("button"); rm.type = "button"; rm.className = "sm del"; rm.textContent = "Удалить";
-      rm.addEventListener("click", function () { removeFile(id, f, rm); });
+      rm.addEventListener("click", function () { removeFrom(PE.BUCKET, "files", id, f, rm, fileErr, fillFiles); });
       li.appendChild(sp); li.appendChild(dl); li.appendChild(rm);
       fileList.appendChild(li);
     });
   }
 
-  function safeExt(name) { var m = /\.([A-Za-z0-9]{1,8})$/.exec(name || ""); return m ? "." + m[1].toLowerCase() : ""; }
-  /* Ключ объекта — только латиница и цифры: кириллицу хранилище в ключах не принимает.
-     Имя с кириллицей хранится в правках плана. */
-  function objectPath(id, name) {
-    return id.replace(/[^A-Za-z0-9_-]/g, "_") + "/" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8) + safeExt(name);
-  }
-  function objectUrl(path) { return API + "/storage/v1/object/" + PE.BUCKET + "/" + path.split("/").map(encodeURIComponent).join("/"); }
-  function removeObject(path) {
+  /* Ответы лежат в закрытой корзине: постоянной ссылки у них нет.
+     На каждое открытие база выдаёт временную ссылку на пять минут. */
+  function signKey(path, name) {
     return token().then(function (at) {
-      return fetch(objectUrl(path), { method: "DELETE", headers: authHeaders(at, null) });
-    }).catch(function () {});
-  }
-
-  function uploadOne(id, file) {
-    var path = objectPath(id, file.name);
-    return token().then(function (at) {
-      return fetch(objectUrl(path), {
+      return fetch(API + "/storage/v1/object/sign/" + PE.KEYBUCKET + "/" + path.split("/").map(encodeURIComponent).join("/"), {
         method: "POST",
-        headers: authHeaders(at, { "Content-Type": file.type || "application/octet-stream", "x-upsert": "false", "cache-control": "3600" }),
-        body: file
+        headers: authHeaders(at, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ expiresIn: 300 })
       });
     }).then(function (r) {
-      if (!r.ok) { var e = new Error("upload"); e.status = r.status; throw e; }
-      var meta = { p: path, n: file.name, s: file.size, t: file.type || "", at: new Date().toISOString() };
-      return mutate(function (e) {
-        var list = Array.isArray(e.files[id]) ? e.files[id] : [];
-        list.push(meta);
-        e.files[id] = list;
-      }).catch(function (err) { removeObject(path); throw err; });
+      if (!r.ok) { var e = new Error("sign"); e.status = r.status; throw e; }
+      return r.json();
+    }).then(function (j) {
+      var u = j.signedURL || j.signedUrl;
+      if (!u) { var e2 = new Error("sign"); e2.status = 0; throw e2; }
+      return API + "/storage/v1" + u + (name ? "&download=" + encodeURIComponent(name) : "");
     });
   }
 
-  fileInput.addEventListener("change", function () {
-    if (!cur || !cur.id || !fileInput.files || !fileInput.files.length) return;
-    var id = cur.id, files = Array.prototype.slice.call(fileInput.files);
-    showErr(fileErr, ""); showErr(fileState, "");
-    var big = files.filter(function (f) { return f.size > MAX_MB * 1024 * 1024; });
-    if (big.length) { showErr(fileErr, "«" + big[0].name + "» больше " + MAX_MB + " МБ — такой файл не прикрепить."); fileInput.value = ""; return; }
-    fileInput.disabled = true;
-    var done = 0;
-    showErr(fileState, "Загружаю " + files.length + (files.length === 1 ? " файл…" : " файла…"));
-    files.reduce(function (p, f) {
-      return p.then(function () { return uploadOne(id, f).then(function () { done++; showErr(fileState, "Загружено " + done + " из " + files.length); fillFiles(id); }); });
-    }, Promise.resolve()).then(function () {
-      showErr(fileState, done === 1 ? "Файл прикреплён." : "Файлы прикреплены: " + done + ".");
-      toast(done === 1 ? "Файл прикреплён" : "Прикреплено файлов: " + done);
+  function openKey(f, download) {
+    /* Вкладку открываем сразу по нажатию, иначе браузер посчитает её всплывающей и закроет */
+    var w = window.open("", "_blank");
+    showErr(keyErr, "");
+    signKey(f.p, download ? f.n : null).then(function (u) {
+      if (w) { w.location = u; } else { window.location.href = u; }
     }, function (err) {
-      showErr(fileState, done ? "Успели прикрепить: " + done + "." : "");
-      afterFail(err, fileErr, lessonDlg);
-    }).then(function () { fileInput.disabled = false; fileInput.value = ""; if (cur && cur.id === id) fillFiles(id); });
-  });
-
-  function removeFile(id, f, btn) {
-    if (!window.confirm("Удалить файл «" + f.n + "»? Он пропадёт у учеников.")) return;
-    btn.disabled = true; showErr(fileErr, ""); showErr(fileState, "");
-    mutate(function (e) {
-      var list = (Array.isArray(e.files[id]) ? e.files[id] : []).filter(function (x) { return !x || x.p !== f.p; });
-      if (list.length) e.files[id] = list; else delete e.files[id];
-    }).then(function () {
-      removeObject(f.p);
-      fillFiles(id); toast("Файл удалён");
-    }, function (err) { btn.disabled = false; afterFail(err, fileErr, lessonDlg); });
+      if (w) { try { w.close(); } catch (e) {} }
+      afterFail(err, keyErr, lessonDlg);
+    });
   }
+
+  function fillKeys(id) {
+    keyList.innerHTML = "";
+    var keys = PE.keysOf(EDITS, id);
+    if (!keys.length) {
+      var li0 = document.createElement("li"); li0.textContent = "Ответов пока нет."; keyList.appendChild(li0); return;
+    }
+    keys.forEach(function (f) {
+      var li = document.createElement("li");
+      var sp = document.createElement("span");
+      var b = document.createElement("button"); b.type = "button"; b.className = "link"; b.textContent = f.n;
+      b.addEventListener("click", function () { openKey(f, false); });
+      var sm = document.createElement("small");
+      sm.textContent = PE.sizeText(f.s) + (f.at ? " · " + stamp(f.at) : "") + (f.g ? " · подготовил Claude" : "");
+      sp.appendChild(b); sp.appendChild(sm);
+      var dl = document.createElement("button"); dl.type = "button"; dl.className = "sm"; dl.textContent = "Скачать";
+      dl.addEventListener("click", function () { openKey(f, true); });
+      var rm = document.createElement("button"); rm.type = "button"; rm.className = "sm del"; rm.textContent = "Удалить";
+      rm.addEventListener("click", function () { removeFrom(PE.KEYBUCKET, "keys", id, f, rm, keyErr, fillKeys); });
+      li.appendChild(sp); li.appendChild(dl); li.appendChild(rm);
+      keyList.appendChild(li);
+    });
+  }
+
+  pickHandler(fileInput, PE.BUCKET, "files", fileState, fileErr, fillFiles);
+  pickHandler(keyInput, PE.KEYBUCKET, "keys", keyState, keyErr, fillKeys);
 
   /* ── Запрос задания у Claude ──
      Запрос ложится в таблицу task_requests. Claude разбирает очередь, готовит и проверяет
-     задание и прикрепляет PDF к уроку — он появится в файлах урока. */
+     задание и прикрепляет к уроку два файла: задание для учеников и ответы для родителя. */
   var wishEl = byId("peWish"), genBtn = byId("peGen"), reqList = byId("peReqList"), genState = byId("peGenState"), genErr = byId("peGenErr");
   var STATUS = { "new": "в очереди", working: "Claude готовит", done: "готово", error: "не получилось" };
 
@@ -1127,7 +1224,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     }).then(function (created) {
       if (!created || !created.length) { var e = new Error("request"); e.status = 403; throw e; }
       wishEl.value = "";
-      showErr(genState, "Запрос №" + created[0].id + " в очереди. Когда задание будет готово, PDF появится в файлах урока.");
+      showErr(genState, "Запрос №" + created[0].id + " в очереди. Задание появится в файлах урока, ответы — в разделе «Ответы».");
       toast("Запрос на задание отправлен");
       loadRequests(id); refreshQueue();
     }, function (err) { afterFail(err, genErr, lessonDlg); })
@@ -1165,7 +1262,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
   byId("peDelClose").addEventListener("click", function () { delDlg.close(); });
 
   resetBtn.addEventListener("click", function () {
-    if (!window.confirm("Сбросить все правки плана? Вернётся исходное расписание: переносы, добавленные уроки и новые названия пропадут на всех устройствах. Прикреплённые файлы останутся.")) return;
+    if (!window.confirm("Сбросить все правки плана? Вернётся исходное расписание: переносы, добавленные уроки и новые названия пропадут на всех устройствах. Прикреплённые файлы и ответы останутся.")) return;
     resetBtn.disabled = true;
     mutate(function (e) { e.days = {}; e.titles = {}; e.added = {}; e.deleted = {}; })
       .then(function () { toast("Правки сброшены, план исходный"); },

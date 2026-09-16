@@ -218,8 +218,9 @@
 (function (root) {
   "use strict";
 
-  var KEYS = ["days", "titles", "added", "deleted", "files"];
-  var BUCKET = "lesson-files";
+  var KEYS = ["days", "titles", "added", "deleted", "files", "keys"];
+  var BUCKET = "lesson-files";      /* задания: корзина открыта на чтение, их видят ученики */
+  var KEYBUCKET = "lesson-keys";    /* ответы: корзина закрыта, ссылка выдаётся только после входа */
 
   function has(o, k) { return !!o && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, k); }
   function obj(x) { return (x && typeof x === "object" && !Array.isArray(x)) ? x : {}; }
@@ -270,12 +271,16 @@
 
   function newId() { return "x:" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-  /* ── Файлы урока: Supabase Storage, корзина lesson-files, открыта на чтение ── */
-  function filesOf(edits, id) {
-    var f = norm(edits).files[id];
+  /* ── Файлы урока ──
+     files — задания, лежат в открытой корзине и показываются всем;
+     keys  — ответы для родителя, лежат в закрытой корзине и в плане не отображаются. */
+  function listOf(edits, slot, id) {
+    var f = norm(edits)[slot][id];
     if (!Array.isArray(f)) return [];
     return f.filter(function (x) { return x && typeof x.p === "string" && x.p && typeof x.n === "string"; });
   }
+  function filesOf(edits, id) { return listOf(edits, "files", id); }
+  function keysOf(edits, id) { return listOf(edits, "keys", id); }
 
   /* name — если задано, ссылка отдаёт файл на скачивание под этим именем */
   function fileUrl(cfg, path, name) {
@@ -309,7 +314,8 @@
 
   root.PlanEdits = { has: has, norm: norm, clone: clone, effective: effective,
                      timeAt: timeAt, newId: newId, fetchEdits: fetchEdits,
-                     BUCKET: BUCKET, filesOf: filesOf, fileUrl: fileUrl, sizeText: sizeText };
+                     BUCKET: BUCKET, KEYBUCKET: KEYBUCKET,
+                     filesOf: filesOf, keysOf: keysOf, fileUrl: fileUrl, sizeText: sizeText };
 })(window);
 
 </script>
