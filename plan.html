@@ -938,7 +938,17 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     showErr(fileErr, ""); showErr(fileState, ""); showErr(keyErr, ""); showErr(keyState, "");
     showErr(genErr, ""); showErr(genState, "");
     wishEl.value = "";
-    if (id) { fillFiles(id); fillKeys(id); loadRequests(id); }
+    if (id) {
+      fillFiles(id); fillKeys(id); loadRequests(id);
+      /* Пока страница открыта, Claude мог прикрепить к уроку задание и ответы.
+         Перечитываем правки и обновляем списки, чтобы не показывать устаревшее. */
+      PE.fetchEdits(CFG).then(function (res) {
+        if (!res || res.missing || busy) return;
+        var j = JSON.stringify(res.edits);
+        if (j !== editsJson) { editsJson = j; EDITS = res.edits; render(); }
+        if (cur && cur.id === id) { fillFiles(id); fillKeys(id); }
+      }).catch(function () {});
+    }
 
     lessonDlg.showModal();
     if (!id) subjSel.focus(); else nameEl.focus();
