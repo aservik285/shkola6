@@ -571,6 +571,17 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       <p class="ok" id="peGenState" hidden></p>
       <p class="err" id="peGenErr" hidden></p>
     </div>
+
+    <div class="sec" id="peSumSec">
+      <h3>Конспект от Claude <span class="lock">видят ученики</span></h3>
+      <p class="hint">Только для уроков теории и повторения. Claude подготовит краткий конспект для переписывания в тетрадь: основные понятия и суть урока в сжатом виде, 200–250 слов, при необходимости 1–2 иллюстрации. Конспект появится в «Файлах урока» и у детей в «Ленте уроков».</p>
+      <label>Пожелания, если есть
+        <textarea id="peSumWish" rows="2" placeholder="Например: обязательно таблицу с признаками делимости"></textarea>
+      </label>
+      <div class="acts"><button type="button" id="peSum">Запросить конспект</button><span class="sp"></span></div>
+      <p class="ok" id="peSumState" hidden></p>
+      <p class="err" id="peSumErr" hidden></p>
+    </div>
     <p class="hint" id="peNewHint" hidden>Файлы, ответы и задания можно добавить, когда урок сохранён.</p>
   </form>
 </dialog>
@@ -935,9 +946,11 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 
     byId("peFilesSec").hidden = !id; byId("peKeysSec").hidden = !id;
     byId("peGenSec").hidden = !id; byId("peNewHint").hidden = !!id;
+    /* Конспект — только у теории и повторения */
+    byId("peSumSec").hidden = !id || !isTheory(id);
     showErr(fileErr, ""); showErr(fileState, ""); showErr(keyErr, ""); showErr(keyState, "");
-    showErr(genErr, ""); showErr(genState, "");
-    wishEl.value = "";
+    showErr(genErr, ""); showErr(genState, ""); showErr(sumErr, ""); showErr(sumState, "");
+    wishEl.value = ""; sumWishEl.value = "";
     if (id) {
       fillFiles(id); fillKeys(id); loadRequests(id);
       /* Пока страница открыта, Claude мог прикрепить к уроку задание и ответы.
@@ -1173,7 +1186,27 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
      Запрос ложится в таблицу task_requests. Claude разбирает очередь, готовит и проверяет
      задание и прикрепляет к уроку два файла: задание для учеников и ответы для родителя. */
   var wishEl = byId("peWish"), genBtn = byId("peGen"), reqList = byId("peReqList"), genState = byId("peGenState"), genErr = byId("peGenErr");
+  var sumWishEl = byId("peSumWish"), sumBtn = byId("peSum"), sumState = byId("peSumState"), sumErr = byId("peSumErr");
   var STATUS = { "new": "в очереди", working: "Claude готовит", done: "готово", error: "не получилось" };
+
+  /* Тип запроса хранится меткой в начале поля wishes: так очередь работает
+     без изменений в таблице task_requests. */
+  var SUMMARY = "[конспект]";
+  function isSummary(w) { return String(w || "").indexOf(SUMMARY) === 0; }
+  function wishText(w) { return isSummary(w) ? String(w).slice(SUMMARY.length).trim() : String(w || ""); }
+
+  /* Конспект просим только к теории и повторению: у практики, тестов и
+     уроков аттестации переписывать в тетрадь нечего. */
+  function kindOf(id) {
+    var el = lessonEl(id), k = el ? el.querySelector(".k") : null;
+    return k ? k.textContent.trim().toLowerCase() : "";
+  }
+  function isTheory(id) {
+    /* Урок, добавленный родителем вручную, вида не имеет — решает родитель */
+    if (has(EDITS.added, id)) return true;
+    var k = kindOf(id);
+    return k.indexOf("теория") >= 0 || k.indexOf("повторение") >= 0;
+  }
 
   function requestRows(query) {
     return token().then(function (at) {
@@ -1190,16 +1223,16 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     requestRows("lesson_id=eq." + encodeURIComponent(id) + "&select=id,status,wishes,note,created_at&order=created_at.desc&limit=6")
       .then(function (list) {
         if (!cur || cur.id !== id) return;
-        if (list === null) { showErr(genErr, "Очередь заданий ещё не настроена в Supabase (нет таблицы task_requests)."); genBtn.disabled = true; return; }
-        genBtn.disabled = false;
+        if (list === null) { showErr(genErr, "Очередь заданий ещё не настроена в Supabase (нет таблицы task_requests)."); genBtn.disabled = true; sumBtn.disabled = true; return; }
+        genBtn.disabled = false; sumBtn.disabled = false;
         if (!list.length) return;
         reqList.hidden = false;
         list.forEach(function (q) {
           var li = document.createElement("li"), sp = document.createElement("span");
           var st = document.createElement("b"); st.className = "st " + q.status; st.textContent = STATUS[q.status] || q.status;
-          sp.appendChild(st); sp.appendChild(document.createTextNode("запрос от " + stamp(q.created_at)));
+          sp.appendChild(st); sp.appendChild(document.createTextNode((isSummary(q.wishes) ? "конспект" : "задание") + " от " + stamp(q.created_at)));
           var sm = document.createElement("small");
-          sm.textContent = [q.wishes ? "пожелания: " + q.wishes : "", q.note || ""].filter(Boolean).join(" · ");
+          sm.textContent = [wishText(q.wishes) ? "пожелания: " + wishText(q.wishes) : "", q.note || ""].filter(Boolean).join(" · ");
           if (sm.textContent) sp.appendChild(sm);
           li.appendChild(sp); reqList.appendChild(li);
         });
@@ -1215,13 +1248,18 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     }, function () {});
   }
 
-  genBtn.addEventListener("click", function () {
+  /* Отправка запроса. summary = true — конспект, иначе задание с ответами. */
+  function sendRequest(summary) {
     if (!cur || !cur.id) return;
-    var id = cur.id, wishes = wishEl.value.replace(/\s+/g, " ").trim().slice(0, 500);
+    var id = cur.id;
+    var box = summary ? sumWishEl : wishEl, btn = summary ? sumBtn : genBtn;
+    var state = summary ? sumState : genState, err = summary ? sumErr : genErr;
+    var wishes = box.value.replace(/\s+/g, " ").trim().slice(0, 500);
+    if (summary) wishes = (SUMMARY + " " + wishes).trim();
     var open = all("#peReqList .st.new, #peReqList .st.working").length;
-    if (open && !window.confirm("По этому уроку задание уже в очереди. Отправить ещё один запрос?")) return;
-    showErr(genErr, ""); showErr(genState, "");
-    genBtn.disabled = true;
+    if (open && !window.confirm("По этому уроку запрос уже в очереди. Отправить ещё один?")) return;
+    showErr(err, ""); showErr(state, "");
+    btn.disabled = true;
     token().then(function (at) {
       return fetch(API + "/rest/v1/task_requests", {
         method: "POST",
@@ -1233,13 +1271,18 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       return r.json();
     }).then(function (created) {
       if (!created || !created.length) { var e = new Error("request"); e.status = 403; throw e; }
-      wishEl.value = "";
-      showErr(genState, "Запрос №" + created[0].id + " в очереди. Задание появится в файлах урока, ответы — в разделе «Ответы».");
-      toast("Запрос на задание отправлен");
+      box.value = "";
+      showErr(state, "Запрос №" + created[0].id + " в очереди. " + (summary
+        ? "Конспект появится в файлах урока и в «Ленте уроков» у детей."
+        : "Задание появится в файлах урока, ответы — в разделе «Ответы»."));
+      toast("Запрос на " + (summary ? "конспект" : "задание") + " отправлен");
       loadRequests(id); refreshQueue();
-    }, function (err) { afterFail(err, genErr, lessonDlg); })
-      .then(function () { genBtn.disabled = false; });
-  });
+    }, function (e2) { afterFail(e2, err, lessonDlg); })
+      .then(function () { btn.disabled = false; });
+  }
+
+  genBtn.addEventListener("click", function () { sendRequest(false); });
+  sumBtn.addEventListener("click", function () { sendRequest(true); });
 
   /* ── Удалённые уроки: вернуть на место ── */
   var delDlg = byId("peDeleted"), delList = byId("peDelList"), delErr = byId("peDelErr");
