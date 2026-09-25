@@ -122,6 +122,8 @@
   .sj{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--acc,var(--muted))}
   .tp{font-size:15px;line-height:1.35;font-weight:500;overflow-wrap:break-word}
   .kd{font-size:11.5px;color:var(--muted)}
+  /* ссылки, добавленные родителем в плане */
+  .links.own a{color:var(--red);background:var(--red-soft)}
   /* урок аттестации ЕдПалм: красная рамка и красная подпись вида урока */
   .card.att{border:2px solid #B8402F;background:#FDF1EE}
   .card.att .kd{color:#B8402F;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
@@ -213,6 +215,10 @@
      files   — файлы урока:                           { "mat:7": [{ p, n, s, t, at, g }] }
                p — путь в хранилище, n — имя для людей, s — размер в байтах,
                t — тип, at — когда прикреплён, g — 1, если задание подготовил Claude
+     links   — ссылки, добавленные родителем:         { "mat:7": [{ u, n }] }
+               u — адрес (только http и https), n — подпись для людей.
+               Ссылки из ленты (видеоуроки, панели, тренажёры) здесь не хранятся:
+               они приходят из генератора и правятся в <предмет>-lenta.txt
 
    Идентификатор урока из ленты — «предмет:номер». Это тот же ключ, по которому
    лежат отметки учеников, поэтому отметка переезжает вместе с уроком.
@@ -223,7 +229,7 @@
 (function (root) {
   "use strict";
 
-  var KEYS = ["days", "titles", "added", "deleted", "files", "keys"];
+  var KEYS = ["days", "titles", "added", "deleted", "files", "keys", "links"];
   var BUCKET = "lesson-files";      /* задания: корзина открыта на чтение, их видят ученики */
   var KEYBUCKET = "lesson-keys";    /* ответы: корзина закрыта, ссылка выдаётся только после входа */
 
@@ -287,6 +293,16 @@
   function filesOf(edits, id) { return listOf(edits, "files", id); }
   function keysOf(edits, id) { return listOf(edits, "keys", id); }
 
+  /* Ссылки родителя. Пускаем только http и https: javascript: и data: в плане
+     открывать нельзя, страницу смотрят дети. */
+  function safeUrl(u) { return typeof u === "string" && /^https?:\/\/\S+$/i.test(u.trim()); }
+  function linksOf(edits, id) {
+    var l = norm(edits).links[id];
+    if (!Array.isArray(l)) return [];
+    return l.filter(function (x) { return x && safeUrl(x.u) && typeof x.n === "string" && x.n; })
+            .map(function (x) { return { u: x.u.trim(), n: x.n }; });
+  }
+
   /* name — если задано, ссылка отдаёт файл на скачивание под этим именем */
   function fileUrl(cfg, path, name) {
     var api = String(cfg.url).replace(/\/+$/, "");
@@ -320,7 +336,8 @@
   root.PlanEdits = { has: has, norm: norm, clone: clone, effective: effective,
                      timeAt: timeAt, newId: newId, fetchEdits: fetchEdits,
                      BUCKET: BUCKET, KEYBUCKET: KEYBUCKET,
-                     filesOf: filesOf, keysOf: keysOf, fileUrl: fileUrl, sizeText: sizeText };
+                     filesOf: filesOf, keysOf: keysOf, linksOf: linksOf, safeUrl: safeUrl,
+                     fileUrl: fileUrl, sizeText: sizeText };
 })(window);
 
 </script>
@@ -561,6 +578,20 @@
         lr.appendChild(a);
       });
       mid.appendChild(lr);
+    }
+
+    /* Ссылки, добавленные родителем в плане */
+    var own = (PE && sb) ? PE.linksOf(EDITS, id) : [];
+    if (own.length) {
+      var lo = document.createElement("div");
+      lo.className = "links own";
+      own.forEach(function (l) {
+        var a = document.createElement("a");
+        a.href = l.u; a.target = "_blank"; a.rel = "noopener"; a.textContent = l.n;
+        a.addEventListener("click", function (e) { e.stopPropagation(); });
+        lo.appendChild(a);
+      });
+      mid.appendChild(lo);
     }
 
     /* Файлы, прикреплённые родителем: открыть в браузере или скачать.

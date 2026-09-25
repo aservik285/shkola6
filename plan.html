@@ -330,6 +330,10 @@ body{background:#fff}
      files   — файлы урока:                           { "mat:7": [{ p, n, s, t, at, g }] }
                p — путь в хранилище, n — имя для людей, s — размер в байтах,
                t — тип, at — когда прикреплён, g — 1, если задание подготовил Claude
+     links   — ссылки, добавленные родителем:         { "mat:7": [{ u, n }] }
+               u — адрес (только http и https), n — подпись для людей.
+               Ссылки из ленты (видеоуроки, панели, тренажёры) здесь не хранятся:
+               они приходят из генератора и правятся в <предмет>-lenta.txt
 
    Идентификатор урока из ленты — «предмет:номер». Это тот же ключ, по которому
    лежат отметки учеников, поэтому отметка переезжает вместе с уроком.
@@ -340,7 +344,7 @@ body{background:#fff}
 (function (root) {
   "use strict";
 
-  var KEYS = ["days", "titles", "added", "deleted", "files", "keys"];
+  var KEYS = ["days", "titles", "added", "deleted", "files", "keys", "links"];
   var BUCKET = "lesson-files";      /* задания: корзина открыта на чтение, их видят ученики */
   var KEYBUCKET = "lesson-keys";    /* ответы: корзина закрыта, ссылка выдаётся только после входа */
 
@@ -404,6 +408,16 @@ body{background:#fff}
   function filesOf(edits, id) { return listOf(edits, "files", id); }
   function keysOf(edits, id) { return listOf(edits, "keys", id); }
 
+  /* Ссылки родителя. Пускаем только http и https: javascript: и data: в плане
+     открывать нельзя, страницу смотрят дети. */
+  function safeUrl(u) { return typeof u === "string" && /^https?:\/\/\S+$/i.test(u.trim()); }
+  function linksOf(edits, id) {
+    var l = norm(edits).links[id];
+    if (!Array.isArray(l)) return [];
+    return l.filter(function (x) { return x && safeUrl(x.u) && typeof x.n === "string" && x.n; })
+            .map(function (x) { return { u: x.u.trim(), n: x.n }; });
+  }
+
   /* name — если задано, ссылка отдаёт файл на скачивание под этим именем */
   function fileUrl(cfg, path, name) {
     var api = String(cfg.url).replace(/\/+$/, "");
@@ -437,7 +451,8 @@ body{background:#fff}
   root.PlanEdits = { has: has, norm: norm, clone: clone, effective: effective,
                      timeAt: timeAt, newId: newId, fetchEdits: fetchEdits,
                      BUCKET: BUCKET, KEYBUCKET: KEYBUCKET,
-                     filesOf: filesOf, keysOf: keysOf, fileUrl: fileUrl, sizeText: sizeText };
+                     filesOf: filesOf, keysOf: keysOf, linksOf: linksOf, safeUrl: safeUrl,
+                     fileUrl: fileUrl, sizeText: sizeText };
 })(window);
 
 </script>
@@ -466,6 +481,8 @@ body.pe-on .pe-add:hover{background:var(--red-soft)}
   max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Без значков-эмодзи: шрифта с ними может не оказаться, и вместо скрепки выйдет пустой прямоугольник */
 .ls .tp .pe-files a.gen{font-weight:700}
+/* ссылки, добавленные родителем: рядом с ссылками урока из ленты */
+.ls .tp a.u2.own{background:var(--red-soft);color:var(--red)}
 .ls .tp .pe-files a:hover{text-decoration:underline}
 dialog.pe{border:1px solid var(--rule);border-radius:10px;padding:0;width:min(520px,calc(100vw - 32px));
   max-height:calc(100vh - 32px);overflow:auto;background:var(--sheet);color:var(--ink);box-shadow:0 24px 60px -20px rgba(15,20,32,.45)}
@@ -545,6 +562,20 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       <span class="sp"></span>
       <button type="button" id="peCancel">Закрыть</button>
       <button type="submit" class="pri" id="peSave">Сохранить</button>
+    </div>
+
+    <div class="sec" id="peLinksSec">
+      <h3>Ссылки урока <span class="lock">видят ученики</span></h3>
+      <p class="hint">Сверху — ссылки самого урока: видеоуроки ЕдПалм и InternetUrok, панели курса, тренажёры. Их можно открыть и проверить. Ниже — ваши ссылки: их можно добавить, переименовать и убрать. Они появятся у урока в плане и в «Ленте уроков» у детей.</p>
+      <ul class="pe-list" id="peLinkBase"></ul>
+      <ul class="pe-list" id="peLinkOwn"></ul>
+      <div class="two">
+        <label>Подпись<input type="text" id="peLinkName" placeholder="Например: разбор темы"></label>
+        <label>Адрес<input type="url" id="peLinkUrl" placeholder="https://…"></label>
+      </div>
+      <div class="acts"><button type="button" id="peLinkAdd">Добавить ссылку</button><span class="sp"></span></div>
+      <p class="ok" id="peLinkState" hidden></p>
+      <p class="err" id="peLinkErr" hidden></p>
     </div>
 
     <div class="sec" id="peFilesSec">
@@ -672,6 +703,15 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     }
     var t = el.querySelector(".tt"), want = titleOf(id);
     if (t && t.textContent !== want) t.textContent = want;
+
+    /* Ссылки, добавленные родителем: открываются так же, как ссылки из ленты */
+    all("a.u2.own", el).forEach(function (n) { n.parentNode.removeChild(n); });
+    (canRead ? PE.linksOf(EDITS, id) : []).forEach(function (l) {
+      var a3 = document.createElement("a");
+      a3.href = l.u; a3.target = "_blank"; a3.rel = "noopener";
+      a3.className = "u2 own"; a3.textContent = l.n; a3.title = "Ссылка родителя · " + l.u;
+      el.querySelector(".tp").appendChild(a3);
+    });
 
     /* Только задания: ответы для родителя сюда не попадают никогда */
     var box = el.querySelector(".pe-files"), files = canRead ? PE.filesOf(EDITS, id) : [];
@@ -949,6 +989,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     fillDays(eff, d); fillPos(eff, d, id);
     daySel.onchange = function () { fillPos(eff, daySel.value, id); };
 
+    byId("peLinksSec").hidden = !id;
     byId("peFilesSec").hidden = !id; byId("peKeysSec").hidden = !id;
     byId("peGenSec").hidden = !id; byId("peNewHint").hidden = !!id;
     /* Конспект — только у теории и повторения */
@@ -956,8 +997,10 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     showErr(fileErr, ""); showErr(fileState, ""); showErr(keyErr, ""); showErr(keyState, "");
     showErr(genErr, ""); showErr(genState, ""); showErr(sumErr, ""); showErr(sumState, "");
     wishEl.value = ""; sumWishEl.value = "";
+    showErr(linkErr, ""); showErr(linkState, "");
+    linkName.value = ""; linkUrl.value = "";
     if (id) {
-      fillFiles(id); fillKeys(id); loadRequests(id);
+      fillLinks(id); fillFiles(id); fillKeys(id); loadRequests(id);
       /* Пока страница открыта, Claude мог прикрепить к уроку задание и ответы.
          Перечитываем правки и обновляем списки, чтобы не показывать устаревшее. */
       PE.fetchEdits(CFG).then(function (res) {
@@ -1186,6 +1229,120 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 
   pickHandler(fileInput, PE.BUCKET, "files", fileState, fileErr, fillFiles);
   pickHandler(keyInput, PE.KEYBUCKET, "keys", keyState, keyErr, fillKeys);
+
+  /* ── Ссылки урока: свои открываем, правим и добавляем ── */
+  var linkBase = byId("peLinkBase"), linkOwn = byId("peLinkOwn"), linkName = byId("peLinkName"),
+      linkUrl = byId("peLinkUrl"), linkAddBtn = byId("peLinkAdd"),
+      linkState = byId("peLinkState"), linkErr = byId("peLinkErr");
+
+  function hostLabel(u) {
+    if (u.indexOf("edpalm") >= 0) return "Видеоурок или тренажёр ЕдПалм";
+    if (u.indexOf("interneturok") >= 0) return "Видеоурок InternetUrok";
+    if (u.indexOf("lesson.edu.ru") >= 0) return "Библиотека ЦОК";
+    var m = /^https?:\/\/([^\/]+)/i.exec(u);
+    return m ? m[1].replace(/^www\./, "") : "ссылка";
+  }
+
+  /* Ссылки самого урока берём из плана: там они уже расставлены генератором */
+  function baseLinks(id) {
+    var el = lessonEl(id), out = [];
+    if (!el) return out;
+    all("a[href]", el).forEach(function (a) {
+      if (a.className.indexOf("own") >= 0) return;
+      if (a.parentNode && a.parentNode.className === "pe-files") return;
+      out.push(a.href);
+    });
+    return out;
+  }
+
+  function linkRow(list, label, url, extra) {
+    var li = document.createElement("li"), sp = document.createElement("span");
+    sp.textContent = label;
+    var sm = document.createElement("small"); sm.textContent = url; sp.appendChild(sm);
+    var a = document.createElement("a");
+    a.href = url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Открыть";
+    li.appendChild(sp); li.appendChild(a);
+    (extra || []).forEach(function (b) { li.appendChild(b); });
+    list.appendChild(li);
+    return li;
+  }
+
+  function miniBtn(text, fn) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "pe-mini"; b.textContent = text;
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  function fillLinks(id) {
+    linkBase.innerHTML = ""; linkOwn.innerHTML = "";
+    var base = baseLinks(id);
+    if (!base.length) {
+      var lb = document.createElement("li"); lb.textContent = "У урока нет своих ссылок — материал даёт конспект.";
+      linkBase.appendChild(lb);
+    } else {
+      base.forEach(function (u) { linkRow(linkBase, hostLabel(u), u); });
+    }
+    var own = PE.linksOf(EDITS, id);
+    if (!own.length) {
+      var lo = document.createElement("li"); lo.textContent = "Своих ссылок пока нет.";
+      linkOwn.appendChild(lo); return;
+    }
+    own.forEach(function (l, n) {
+      linkRow(linkOwn, l.n, l.u, [
+        miniBtn("Изменить", function () { editLink(id, n); }),
+        miniBtn("Убрать", function () { dropLink(id, n); })
+      ]);
+    });
+  }
+
+  function saveLinks(id, arr, okText) {
+    showErr(linkErr, ""); showErr(linkState, "");
+    mutate(function (e) {
+      e.links = e.links || {};
+      if (arr.length) { e.links[id] = arr; } else { delete e.links[id]; }
+    }).then(function () {
+      if (cur && cur.id === id) fillLinks(id);
+      showErr(linkState, okText); toast(okText);
+    }, function (err) { afterFail(err, linkErr, lessonDlg); });
+  }
+
+  function editLink(id, n) {
+    var own = PE.linksOf(EDITS, id), l = own[n];
+    if (!l) return;
+    var name = window.prompt("Подпись ссылки", l.n);
+    if (name === null) return;
+    var url = window.prompt("Адрес ссылки", l.u);
+    if (url === null) return;
+    name = name.replace(/\s+/g, " ").trim().slice(0, 80);
+    url = url.trim();
+    if (!name) { showErr(linkErr, "Подпись не может быть пустой."); return; }
+    if (!PE.safeUrl(url)) { showErr(linkErr, "Адрес должен начинаться с http:// или https://"); return; }
+    own[n] = { u: url, n: name };
+    saveLinks(id, own, "Ссылка изменена");
+  }
+
+  function dropLink(id, n) {
+    var own = PE.linksOf(EDITS, id);
+    if (!own[n]) return;
+    if (!window.confirm("Убрать ссылку «" + own[n].n + "»?")) return;
+    own.splice(n, 1);
+    saveLinks(id, own, "Ссылка убрана");
+  }
+
+  linkAddBtn.addEventListener("click", function () {
+    if (!cur || !cur.id) return;
+    var id = cur.id;
+    var name = linkName.value.replace(/\s+/g, " ").trim().slice(0, 80);
+    var url = linkUrl.value.trim();
+    showErr(linkErr, ""); showErr(linkState, "");
+    if (!PE.safeUrl(url)) { showErr(linkErr, "Адрес должен начинаться с http:// или https://"); return; }
+    if (!name) { name = hostLabel(url); }
+    var own = PE.linksOf(EDITS, id);
+    own.push({ u: url, n: name });
+    linkName.value = ""; linkUrl.value = "";
+    saveLinks(id, own, "Ссылка добавлена");
+  });
 
   /* ── Запрос задания у Claude ──
      Запрос ложится в таблицу task_requests. Claude разбирает очередь, готовит и проверяет
