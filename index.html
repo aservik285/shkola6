@@ -557,7 +557,8 @@
     if (lesson.u && lesson.u.length) {
       var lr = document.createElement("div");
       lr.className = "links";
-      var nEd = 0, nv = lesson.nv || [];
+      var nVid = 0, nv = lesson.nv || [];
+      var vidTotal = lesson.u.filter(function (h) { return h.indexOf("interneturok") >= 0; }).length;
       lesson.u.forEach(function (href, n) {
         var a = document.createElement("a");
         a.href = href; a.target = "_blank"; a.rel = "noopener";
@@ -568,11 +569,17 @@
           a.textContent = href.indexOf("lesson.edu.ru") >= 0
             ? "Материал подбирает родитель"
             : "На проверку у родителя";
+        } else if (href.indexOf("interneturok") >= 0) {
+          nVid++;
+          a.textContent = vidTotal > 1 ? "Видео " + nVid : "Видеоурок";
+        } else if (href.indexOf("videoaccordion") >= 0) {
+          a.textContent = "Видеоурок ЕдПалм";
+        } else if (href.indexOf("edpalm") >= 0 && href.indexOf("tilda") >= 0) {
+          a.textContent = "Панель ЕдПалм";
         } else if (href.indexOf("edpalm") >= 0) {
-          nEd++;
-          a.textContent = "ЕдПалм" + (lesson.u.filter(function (h) { return h.indexOf("edpalm") >= 0; }).length > 1 ? " " + nEd : "");
+          a.textContent = "Тренажёр ЕдПалм";
         } else {
-          a.textContent = lesson.u.length > 1 ? "Видео " + (n + 1) : "Открыть видеоурок";
+          a.textContent = "Открыть материал";
         }
         a.addEventListener("click", function (e) { e.stopPropagation(); });
         lr.appendChild(a);
