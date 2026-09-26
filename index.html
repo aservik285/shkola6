@@ -97,6 +97,7 @@
   .ghead h3{margin:0;font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
   .ghead.debt h3{color:var(--red)}
   .ghead.today h3{color:var(--ink-2)}
+  .ghead.check h3{color:#8A5A12}
   .ghead span{font-size:12.5px;color:var(--muted)}
   .more{appearance:none;border:1px solid var(--rule);background:var(--sheet-2);color:var(--ink-2);
     font:600 13px/1 "Golos Text",sans-serif;padding:11px 14px;border-radius:9px;cursor:pointer;
@@ -232,6 +233,12 @@
     <div class="ghead debt"><h3>Долги</h3><span id="debtCount"></span></div>
     <div id="debtList" style="display:flex;flex-direction:column;gap:8px"></div>
     <button type="button" class="more" id="debtMore" hidden></button>
+  </div>
+
+  <div class="group" id="checkGroup" hidden>
+    <div class="ghead check"><h3>На проверке</h3><span id="checkCount"></span></div>
+    <div id="checkList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <button type="button" class="more" id="checkMore" hidden></button>
   </div>
 
   <div class="group">
@@ -451,7 +458,7 @@
   /* Идентификаторы s1/s2 менять нельзя — по ним лежат отметки в базе. */
   var STUDENTS = [{ id: "s1", name: "Лёша" }, { id: "s2", name: "Юра" }];
   var sid = "s1", today = DATA.days[0], marks = {}, db = null, unsub = null, showAllDebts = false;
-  var parentMode = false, toastTimer = null;
+  var showAllChecks = false, parentMode = false, toastTimer = null;
 
   /* короткое сообщение внизу экрана */
   function toast(text) {
@@ -487,9 +494,11 @@
     if (parentMode) {
       marks[id] = (st === "done") ? "check:" + today : today;
     } else {
+      /* Ученик только отправляет урок на проверку. Снять отметку и подтвердить
+         может родитель: иначе проверенное и отправленное легко потерять. */
       if (st === "done") { toast("Урок уже подтверждён родителем"); return; }
-      if (st === "check") { delete marks[id]; }
-      else { marks[id] = "check:" + today; }
+      if (st === "check") { toast("Урок ждёт проверки родителя"); return; }
+      marks[id] = "check:" + today;
     }
     save();
     render();
@@ -757,13 +766,15 @@
     /* Один проход по году: долги (день прошёл, отметки нет), опережение и прогресс.
        Идём по дням с учётом правок родителя, поэтому перенесённый урок
        становится долгом только после своего нового дня. */
-    var debts = [], lagBy = {}, aheadBy = {}, planned = 0, done = 0;
+    var debts = [], waiting = [], lagBy = {}, aheadBy = {}, planned = 0, done = 0;
     DATA.order.forEach(function (s) { lagBy[s] = 0; aheadBy[s] = 0; });
     DATA.days.forEach(function (d) {
       (EFF[d] || []).forEach(function (id) {
         var L = lessonOf(id);
         if (!L || !(L.s in lagBy)) return;
         var ok = isDone(id);
+        /* уроки, ждущие проверки родителя, собираем со всех дней — как долги */
+        if (statusOf(id) === "check") waiting.push({ id: id, date: d });
         if (d < today && !ok) { debts.push({ id: id, date: d }); lagBy[L.s]++; }
         if (d > today && ok) aheadBy[L.s]++;
         if (d <= today) { planned++; if (ok) done++; }
@@ -802,6 +813,26 @@
         ? "Свернуть"
         : "Показать ещё " + (debts.length - LIMIT) + " " + plural(debts.length - LIMIT, "урок", "урока", "уроков");
     } else { moreBtn.hidden = true; }
+
+    /* На проверке: все уроки, которые ученик отметил, а родитель ещё не подтвердил.
+       Показываем их на любой дате, как долги, — иначе отметка теряется из виду. */
+    var checkList = document.getElementById("checkList");
+    checkList.innerHTML = "";
+    var shownWait = showAllChecks ? waiting : waiting.slice(0, LIMIT);
+    shownWait.forEach(function (w) {
+      var c = card(w.id, { debtDate: w.date });
+      if (c) checkList.appendChild(c);
+    });
+    document.getElementById("checkGroup").hidden = waiting.length === 0;
+    document.getElementById("checkCount").textContent =
+      waiting.length + " " + plural(waiting.length, "урок", "урока", "уроков") + " ждёт проверки";
+    var checkMoreBtn = document.getElementById("checkMore");
+    if (waiting.length > LIMIT) {
+      checkMoreBtn.hidden = false;
+      checkMoreBtn.textContent = showAllChecks
+        ? "Свернуть"
+        : "Показать ещё " + (waiting.length - LIMIT) + " " + plural(waiting.length - LIMIT, "урок", "урока", "уроков");
+    } else { checkMoreBtn.hidden = true; }
 
     /* уроки дня — в порядке, который задал родитель; время сверх сетки считается само */
     var list = document.getElementById("todayList");
@@ -850,6 +881,9 @@
   });
   document.getElementById("debtMore").addEventListener("click", function () {
     showAllDebts = !showAllDebts; render();
+  });
+  document.getElementById("checkMore").addEventListener("click", function () {
+    showAllChecks = !showAllChecks; render();
   });
 
   /* Открываемся всегда на сегодняшнем дне — выбор дня не запоминается */
