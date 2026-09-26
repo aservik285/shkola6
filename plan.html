@@ -103,6 +103,12 @@ section{display:flex;flex-direction:column;gap:14px}
 /* суббота, воскресенье, каникулы и праздники: уроков нет, но день открыт для переноса */
 .day.wend{background:var(--sheet-2,#F3F5F9)}
 .day.wend .dn{color:var(--muted)}
+/* сегодняшний день */
+.day.is-today{background:color-mix(in srgb,var(--pen) 7%,transparent);box-shadow:inset 0 0 0 2px var(--pen)}
+.day.is-today .dn{color:var(--pen);font-weight:700}
+.day.is-today .dn::after{content:" · сегодня";font-size:9.5px;letter-spacing:.06em;text-transform:uppercase}
+.day.flash{animation:dayflash 1.4s ease-out}
+@keyframes dayflash{0%{background:var(--pen-soft)}100%{background:transparent}}
 .day .off{align-self:flex-start;margin:0 8px;font-size:9.5px;font-weight:700;letter-spacing:.06em;
   text-transform:uppercase;color:var(--muted);border:1px dashed var(--rule);border-radius:3px;padding:1px 5px}
 .wk.hol{opacity:.85}
@@ -182,7 +188,7 @@ body{background:#fff}
 <optgroup label="Месяц"><option value="m:2026-09">Сентябрь 2026</option><option value="m:2026-10">Октябрь 2026</option><option value="m:2026-11">Ноябрь 2026</option><option value="m:2026-12">Декабрь 2026</option><option value="m:2027-01">Январь 2027</option><option value="m:2027-02">Февраль 2027</option><option value="m:2027-03">Март 2027</option><option value="m:2027-04">Апрель 2027</option><option value="m:2027-05">Май 2027</option><option value="m:2027-06">Июнь 2027</option></optgroup>
 <optgroup label="Неделя"><option value="w:1">Неделя 1 — 7–13 сентября</option><option value="w:2">Неделя 2 — 14–20 сентября</option><option value="w:3">Неделя 3 — 21–27 сентября</option><option value="w:4">Неделя 4 — 28 сентября — 4 октября</option><option value="w:5">Неделя 5 — 12–18 октября</option><option value="w:6">Неделя 6 — 19–25 октября</option><option value="w:7">Неделя 7 — 26 октября — 1 ноября</option><option value="w:8">Неделя 8 — 2–8 ноября</option><option value="w:9">Неделя 9 — 9–15 ноября</option><option value="w:10">Неделя 10 — 16–22 ноября</option><option value="w:11">Неделя 11 — 23–29 ноября</option><option value="w:12">Неделя 12 — 30 ноября — 6 декабря</option><option value="w:13">Неделя 13 — 7–13 декабря</option><option value="w:14">Неделя 14 — 14–20 декабря</option><option value="w:15">Неделя 15 — 21–27 декабря</option><option value="w:16">Неделя 16 — 11–17 января</option><option value="w:17">Неделя 17 — 18–24 января</option><option value="w:18">Неделя 18 — 25–31 января</option><option value="w:19">Неделя 19 — 1–7 февраля</option><option value="w:20">Неделя 20 — 8–14 февраля</option><option value="w:21">Неделя 21 — 15–21 февраля</option><option value="w:22">Неделя 22 — 22–28 февраля</option><option value="w:23">Неделя 23 — 1–7 марта</option><option value="w:24">Неделя 24 — 8–14 марта</option><option value="w:25">Неделя 25 — 15–21 марта</option><option value="w:26">Неделя 26 — 29 марта — 4 апреля</option><option value="w:27">Неделя 27 — 5–11 апреля</option><option value="w:28">Неделя 28 — 12–18 апреля</option><option value="w:29">Неделя 29 — 19–25 апреля</option><option value="w:30">Неделя 30 — 26 апреля — 2 мая</option><option value="w:31">Неделя 31 — 3–9 мая</option><option value="w:32">Неделя 32 — 10–16 мая</option><option value="w:33">Неделя 33 — 17–23 мая</option><option value="w:34">Неделя 34 — 24–30 мая</option><option value="w:35">Неделя 35 — 31 мая — 6 июня</option><option value="w:36">Неделя 36 — 7–13 июня</option></optgroup>
 </select>
-<button type="button" class="freset" id="freset">Сбросить</button>
+<button type="button" class="freset" id="ftoday">Сегодня</button><button type="button" class="freset" id="freset">Сбросить</button>
 <span class="fcount" id="fcount"></span></div>
 </div>
 <div class="note">
@@ -333,6 +339,41 @@ body{background:#fff}
   apply();
   /* редактор плана (plan-tail.html) вызывает фильтры заново после каждой перестановки */
   window.planApplyFilters = apply;
+
+  /* ── Сегодняшний день: подсветка, прокрутка при открытии и кнопка «Сегодня» ──
+     Дата берётся с устройства: план — статическая страница, собранная заранее. */
+  var todayBtn = document.getElementById("ftoday");
+  var allDays = Array.prototype.slice.call(document.querySelectorAll(".day[data-d]"));
+  function isoToday() {
+    var t = new Date(), m = t.getMonth() + 1, d = t.getDate();
+    return t.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d;
+  }
+  /* Если сегодня вне учебного года, берём ближайший день вперёд, иначе последний */
+  function todayEl() {
+    var iso = isoToday(), exact = null, next = null;
+    allDays.forEach(function (d) {
+      var v = d.getAttribute("data-d");
+      if (v === iso) exact = d;
+      if (!next && v > iso) next = d;
+    });
+    return exact || next || allDays[allDays.length - 1] || null;
+  }
+  var tEl = todayEl();
+  if (tEl) {
+    if (tEl.getAttribute("data-d") === isoToday()) tEl.classList.add("is-today");
+    window.planToday = tEl.getAttribute("data-d");
+  }
+  function goToday() {
+    if (!tEl) return;
+    /* если включён фильтр периода, сегодняшний день может быть скрыт — сбрасываем */
+    if (tEl.hidden || (tEl.closest(".wk") && tEl.closest(".wk").hidden)) { per.value = "all"; apply(); }
+    tEl.scrollIntoView({ block: "center", behavior: "smooth" });
+    tEl.classList.add("flash");
+    setTimeout(function () { tEl.classList.remove("flash"); }, 1600);
+  }
+  if (todayBtn) todayBtn.addEventListener("click", goToday);
+  /* при открытии страницы сразу показываем сегодняшний день */
+  if (tEl) setTimeout(function () { tEl.scrollIntoView({ block: "center" }); }, 60);
 })();
 </script><script>
 /* Правки плана — общий код для «Шестого класса по дням» и «Ленты уроков».
@@ -516,6 +557,10 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
 .pe input[type="file"]{font-size:13px;padding:8px}
 .pe textarea{min-height:64px;resize:vertical}
 .pe .two{display:grid;grid-template-columns:2fr 1fr;gap:10px}
+.pe .daypick{display:flex;gap:6px;align-items:stretch}
+.pe .daypick select{flex:1;min-width:0}
+.pe .daypick button{white-space:nowrap}
+.pe option.opt-today{font-weight:700;color:var(--red)}
 @media (max-width:420px){.pe .two{grid-template-columns:1fr}}
 .pe .sec{border-top:1px solid var(--rule);padding-top:14px;display:flex;flex-direction:column;gap:9px}
 .pe .sec.keys{border-top:1px solid var(--red-line,var(--rule))}
@@ -571,7 +616,7 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     </label>
     <p class="hint" id="peOrigWrap">Исходное: <span id="peOrig"></span> <button type="button" class="link" id="peRestoreTitle">вернуть</button></p>
     <div class="two">
-      <label>День<select id="peDay"></select></label>
+      <label>День<span class="daypick"><select id="peDay"></select><button type="button" class="pe-mini" id="peToday">Сегодня</button></span></label>
       <label>Место в дне<select id="pePos"></select></label>
     </div>
     <p class="err" id="peLessonErr" hidden></p>
@@ -994,10 +1039,18 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     DATES.forEach(function (d) {
       if (WEEK[d] !== gw) { gw = WEEK[d]; group = document.createElement("optgroup"); group.label = "Неделя " + gw; daySel.appendChild(group); }
       var o = document.createElement("option");
-      o.value = d; o.textContent = human(d) + " · уроков: " + eff[d].length;
+      o.value = d;
+      o.textContent = human(d) + " · уроков: " + eff[d].length + (d === isoToday() ? " · сегодня" : "");
+      if (d === isoToday()) o.className = "opt-today";
       group.appendChild(o);
     });
     daySel.value = chosen;
+  }
+
+  /* Сегодняшняя дата с устройства: план собран заранее и её не знает */
+  function isoToday() {
+    var t = new Date(), m = t.getMonth() + 1, d = t.getDate();
+    return t.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d;
   }
   function fillPos(eff, d, id) {
     var list = eff[d].filter(function (x) { return x !== id; }), at = eff[d].indexOf(id);
@@ -1033,6 +1086,14 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     }
     fillDays(eff, d); fillPos(eff, d, id);
     daySel.onchange = function () { fillPos(eff, daySel.value, id); };
+    /* «Сегодня» рядом со списком дат: быстрый перенос урока на текущий день */
+    var tBtn = byId("peToday");
+    tBtn.disabled = !has(eff, isoToday());
+    tBtn.onclick = function () {
+      var t = isoToday();
+      if (!has(eff, t)) { toast("Сегодняшнего дня нет в плане"); return; }
+      daySel.value = t; fillPos(eff, t, id);
+    };
 
     byId("peLinksSec").hidden = !id;
     byId("peFilesSec").hidden = !id; byId("peKeysSec").hidden = !id;
