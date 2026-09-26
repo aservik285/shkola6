@@ -108,6 +108,30 @@
     cursor:pointer;user-select:none;min-height:64px;transition:background .12s}
   .card:active{background:var(--sheet-2)}
   .card.debt{border-color:var(--red-line);background:var(--red-soft)}
+  /* урок на проверке у родителя */
+  .card.check{background:#FFFBF0;border-left-color:#C79A3E}
+  .card.check .tick{border-color:#C79A3E;color:#C79A3E;background:#fff}
+  .chip.ck{color:#8A5A12;background:#FDF0D5}
+  .chip.ok{color:var(--green);background:var(--green-soft,#E7F5EC)}
+  /* режим родителя в трекере */
+  .bar .pm{font-weight:600}
+  .bar .pm.on{background:var(--red);border-color:var(--red);color:#fff}
+  .pm-dlg{border:1px solid var(--line);border-radius:12px;padding:0;max-width:min(420px,calc(100vw - 32px));
+    background:var(--sheet);color:var(--ink)}
+  .pm-dlg::backdrop{background:rgba(15,20,32,.45)}
+  .pm-dlg form{margin:0;padding:18px;display:flex;flex-direction:column;gap:10px}
+  .pm-dlg h3{margin:0;font-size:17px}
+  .pm-dlg p{margin:0;font-size:13px;line-height:1.4;color:var(--muted)}
+  .pm-dlg input{font:15px/1.35 inherit;padding:10px;border:1px solid var(--line);border-radius:8px;min-height:44px}
+  .pm-dlg .err{color:var(--red)}
+  .pm-dlg .acts{display:flex;gap:8px;justify-content:flex-end}
+  .pm-dlg button{font:600 14px/1 inherit;padding:10px 14px;border-radius:8px;border:1px solid var(--line);
+    background:var(--sheet-2);color:var(--ink);min-height:40px;cursor:pointer}
+  .pm-dlg button[type="submit"]{background:var(--red);border-color:var(--red);color:#fff}
+  /* всплывающая подсказка */
+  .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;
+    background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:10px 14px;border-radius:8px;
+    max-width:calc(100vw - 32px);text-align:center}
   .card.done{background:var(--sheet-2);border-left-color:var(--green)}
   .card.done .tp{text-decoration:line-through;color:var(--muted)}
   .card.done .sj{color:var(--muted)}
@@ -173,8 +197,23 @@
       <select id="day" aria-label="Учебный день"></select>
       <button type="button" id="next" aria-label="Следующий день">›</button>
       <button type="button" id="todayBtn" class="wide">Сегодня</button>
+      <button type="button" id="pmBtn" class="pm">Родитель</button>
     </div>
   </div>
+
+  <dialog id="pmDlg" class="pm-dlg">
+    <form id="pmForm">
+      <h3>Режим родителя</h3>
+      <p>Ученик отмечает урок как выполненный — урок уходит на проверку.
+         Подтвердить выполнение может только родитель. Введите пароль режима родителя.</p>
+      <input type="password" id="pmPass" autocomplete="current-password" placeholder="Пароль">
+      <p class="err" id="pmErr" hidden></p>
+      <div class="acts">
+        <button type="button" id="pmCancel">Отмена</button>
+        <button type="submit" id="pmGo">Войти</button>
+      </div>
+    </form>
+  </dialog>
 
   <div class="today-line">
     <h1 id="dayTitle">—</h1>
@@ -412,17 +451,46 @@
   /* Идентификаторы s1/s2 менять нельзя — по ним лежат отметки в базе. */
   var STUDENTS = [{ id: "s1", name: "Лёша" }, { id: "s2", name: "Юра" }];
   var sid = "s1", today = DATA.days[0], marks = {}, db = null, unsub = null, showAllDebts = false;
+  var parentMode = false, toastTimer = null;
+
+  /* короткое сообщение внизу экрана */
+  function toast(text) {
+    var box = document.getElementById("toastBox");
+    if (!box) {
+      box = document.createElement("div"); box.id = "toastBox"; box.className = "toast";
+      document.body.appendChild(box);
+    }
+    box.textContent = text; box.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { box.hidden = true; }, 2600);
+  }
   var seeded = {};
 
   function lsGet(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 
-  function isDone(id) { return Object.prototype.hasOwnProperty.call(marks, id); }
+  /* Статус урока: "" — не сделан, "check" — на проверке у родителя, "done" — подтверждён.
+     В базе значение строкой: "check:<дата>" или "<дата>". Старые отметки — просто дата,
+     они считаются подтверждёнными, чтобы пройденное не откатилось. */
+  function statusOf(id) {
+    var v = marks[id];
+    if (v == null) return "";
+    return String(v).indexOf("check:") === 0 ? "check" : "done";
+  }
+  function isDone(id) { return statusOf(id) !== ""; }
+  function isConfirmed(id) { return statusOf(id) === "done"; }
 
-  /* Отметка отдельного урока — независимо от остальных. */
+  /* Ученик отмечает выполнение — урок уходит на проверку.
+     Подтверждает урок только родитель, в режиме родителя. */
   function toggle(id) {
-    if (isDone(id)) delete marks[id];
-    else marks[id] = today;
+    var st = statusOf(id);
+    if (parentMode) {
+      marks[id] = (st === "done") ? "check:" + today : today;
+    } else {
+      if (st === "done") { toast("Урок уже подтверждён родителем"); return; }
+      if (st === "check") { delete marks[id]; }
+      else { marks[id] = "check:" + today; }
+    }
     save();
     render();
   }
@@ -537,14 +605,15 @@
   function card(id, opts) {
     var lesson = lessonOf(id);
     if (!lesson) return null;
-    var s = lesson.s, done = isDone(id);
+    var s = lesson.s, st = statusOf(id), done = st !== "";
     var el = document.createElement("div");
     /* уроки аттестации ЕдПалм выделяются рамкой и меткой */
-    el.className = "card " + s + (opts.debt && !done ? " debt" : "") + (done ? " done" : "")
+    el.className = "card " + s + (opts.debt && !done ? " debt" : "")
+      + (st === "done" ? " done" : "") + (st === "check" ? " check" : "")
       + (lesson.k === "аттестация" ? " att" : "");
     el.setAttribute("role", "button");
     el.setAttribute("tabindex", "0");
-    el.setAttribute("aria-pressed", done ? "true" : "false");
+    el.setAttribute("aria-pressed", st === "done" ? "true" : "false");
 
     var tick = document.createElement("div");
     tick.className = "tick"; tick.textContent = "✓";
@@ -643,6 +712,12 @@
 
     var rgt = document.createElement("div");
     rgt.className = "rgt";
+    if (st) {
+      var stc = document.createElement("span");
+      stc.className = "chip " + (st === "done" ? "ok" : "ck");
+      stc.textContent = st === "done" ? "выполнен" : "на проверке";
+      rgt.appendChild(stc);
+    }
     if (opts.time) { var tm = document.createElement("div"); tm.className = "tm"; tm.textContent = opts.time; rgt.appendChild(tm); }
     if (opts.debtDate) { var ch = document.createElement("span"); ch.className = "chip d"; ch.textContent = shortHuman(opts.debtDate); rgt.appendChild(ch); }
 
@@ -731,16 +806,18 @@
     /* уроки дня — в порядке, который задал родитель; время сверх сетки считается само */
     var list = document.getElementById("todayList");
     list.innerHTML = "";
-    var ids = EFF[today] || [], doneToday = 0, shownToday = 0;
+    var ids = EFF[today] || [], doneToday = 0, checkToday = 0, shownToday = 0;
     ids.forEach(function (id, i) {
       var c = card(id, { time: timeOf(i) });
       if (!c) return;
       shownToday++;
-      if (isDone(id)) doneToday++;
+      if (isConfirmed(id)) doneToday++;
+      else if (statusOf(id) === "check") checkToday++;
       list.appendChild(c);
     });
     if (!shownToday) list.innerHTML = '<div class="empty">На этот день уроков нет</div>';
-    document.getElementById("todayMeta").textContent = "пройдено " + doneToday + " из " + shownToday;
+    document.getElementById("todayMeta").textContent = "выполнено " + doneToday + " из " + shownToday
+      + (checkToday ? " · на проверке " + checkToday : "");
 
     /* прогресс: пройдено от запланированного по сегодняшний день включительно */
     document.getElementById("progBar").style.width = planned ? Math.round(done / planned * 100) + "%" : "0";
@@ -809,6 +886,51 @@
     setSync("off", "отметки хранятся на этом устройстве");
     watch();
   }
+
+  /* ── Режим родителя: подтверждение выполненных уроков ──
+     Пароль проверяет Supabase Auth, на странице он не хранится. Режим живёт,
+     пока открыта вкладка. Это разделение ролей, а не защита базы: отметки
+     по-прежнему пишутся публичным ключом. */
+  var pmBtn = document.getElementById("pmBtn"), pmDlg = document.getElementById("pmDlg"),
+      pmPass = document.getElementById("pmPass"), pmErr = document.getElementById("pmErr"),
+      pmGo = document.getElementById("pmGo");
+
+  function pmLabel() {
+    pmBtn.textContent = parentMode ? "Родитель: вкл" : "Родитель";
+    pmBtn.className = "pm" + (parentMode ? " on" : "");
+  }
+  if (!sb || !CFG.parent) { pmBtn.hidden = true; } else { pmLabel(); }
+
+  pmBtn.addEventListener("click", function () {
+    if (parentMode) { parentMode = false; pmLabel(); render(); toast("Режим родителя выключен"); return; }
+    pmErr.hidden = true; pmPass.value = "";
+    pmDlg.showModal(); pmPass.focus();
+  });
+  document.getElementById("pmCancel").addEventListener("click", function () { pmPass.value = ""; pmDlg.close(); });
+  document.getElementById("pmForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var pw = pmPass.value;
+    if (!pw) return;
+    pmGo.disabled = true; pmErr.hidden = true;
+    fetch(sb.url + "/auth/v1/token?grant_type=password", {
+      method: "POST",
+      headers: { apikey: sb.key, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: CFG.parent, password: pw })
+    }).then(function (r) {
+      if (!r.ok) { var e = new Error("login"); e.status = r.status; throw e; }
+      return r.json();
+    }).then(function () {
+      pmPass.value = ""; pmDlg.close();
+      parentMode = true; pmLabel(); render();
+      toast("Режим родителя включён: нажимайте урок, чтобы подтвердить");
+    }, function (e) {
+      pmPass.value = ""; pmPass.focus();
+      pmErr.hidden = false;
+      pmErr.textContent = e.status === 400 ? "Неверный пароль."
+        : e.status === 429 ? "Слишком много попыток. Подождите несколько минут."
+        : "Не удалось войти. Проверьте связь.";
+    }).then(function () { pmGo.disabled = false; });
+  });
 
   document.getElementById("footNote").textContent =
     "Год целиком: " + DATA.days.length + " учебных дней, 25 уроков в неделю.";
