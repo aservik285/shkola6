@@ -1,0 +1,51 @@
+# Не даёт базе Supabase уснуть.
+#
+# Бесплатный проект Supabase останавливается примерно после недели без
+# обращений. Когда он остановлен, его адрес исчезает из DNS, и трекер пишет
+# «нет связи с базой». Этот запрос выполняется дважды в неделю и считается
+# обращением, поэтому проект не засыпает.
+#
+# Ключ берётся из секрета репозитория SUPABASE_ANON_KEY. Это публикуемый
+# (anon) ключ — тот же, что лежит в index.html и plan.html. Служебный ключ
+# (service_role) сюда класть нельзя ни в каком виде.
+#
+# Если запрос не прошёл, GitHub пришлёт письмо о неудачном запуске — это
+# ранний сигнал, что с базой что-то не так.
+
+name: Не давать базе уснуть
+
+on:
+  schedule:
+    # Понедельник и четверг, 06:00 UTC — это 09:00 по Москве.
+    # Самый большой промежуток выходит четыре дня, запас до недели есть.
+    - cron: '0 6 * * 1,4'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Запрос к базе
+        env:
+          URL: https://pqvdeoyhrfqjihqzdgpo.supabase.co
+          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "Не задан секрет SUPABASE_ANON_KEY."
+            echo "Settings - Secrets and variables - Actions - New repository secret."
+            exit 1
+          fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/progress?select=student&limit=1" || echo 000)
+          echo "Ответ базы: HTTP $code"
+          if [ "$code" = "000" ]; then
+            echo "База не ответила совсем. Скорее всего, проект уже на паузе:"
+            echo "зайдите на supabase.com и нажмите Restore."
+            exit 1
+          fi
+          if [ "$code" != "200" ]; then
+            echo "База ответила кодом $code вместо 200 - проверьте ключ и права."
+            exit 1
+          fi
+          echo "База жива, проект не уснёт."
