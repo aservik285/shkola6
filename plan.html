@@ -15,6 +15,7 @@
 --red:#BE3A2E;--red-soft:#F8E5E2;--plum:#75407C;--plum-soft:#F0E5F2;
 --a-rus:#2A4C9E;--a-mat:#10706B;--a-eng:#7A3E9C;--a-lit:#1F5FA8;
 --a-ist:#8A5B12;--a-bio:#3B6B2E;--a-geo:#8A5B12;--a-obs:#8A5B12;--a-inf:#10706B;
+--a-izo:#A4446E;--a-muz:#1F6F8B;--a-teh:#6B5A2E;--a-fiz:#2E6B4F;
 --shadow:0 1px 2px rgba(23,29,42,.05),0 8px 24px -14px rgba(23,29,42,.22);--r:4px;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
@@ -23,6 +24,7 @@
 --red:#E88175;--red-soft:#3A1F1C;--plum:#C79BCE;--plum-soft:#2C1E2F;
 --a-rus:#8CACEF;--a-mat:#56BDB3;--a-eng:#C79BCE;--a-lit:#7FB3E8;
 --a-ist:#D9A85A;--a-bio:#8CC177;--a-geo:#D9A85A;--a-obs:#D9A85A;--a-inf:#56BDB3;
+--a-izo:#E79BB8;--a-muz:#7FC4DB;--a-teh:#C9B37A;--a-fiz:#7FC4A0;
 --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -16px rgba(0,0,0,.7);
 }}
 :root[data-theme="dark"]{
@@ -31,6 +33,7 @@
 --red:#E88175;--red-soft:#3A1F1C;--plum:#C79BCE;--plum-soft:#2C1E2F;
 --a-rus:#8CACEF;--a-mat:#56BDB3;--a-eng:#C79BCE;--a-lit:#7FB3E8;
 --a-ist:#D9A85A;--a-bio:#8CC177;--a-geo:#D9A85A;--a-obs:#D9A85A;--a-inf:#56BDB3;
+--a-izo:#E79BB8;--a-muz:#7FC4DB;--a-teh:#C9B37A;--a-fiz:#7FC4A0;
 --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -16px rgba(0,0,0,.7);
 }
 *{box-sizing:border-box}
@@ -85,6 +88,7 @@ select.per{appearance:none;background:var(--sheet-2);border:1px solid var(--rule
 .s-rus{--acc:var(--a-rus)}.s-mat{--acc:var(--a-mat)}.s-eng{--acc:var(--a-eng)}.s-lit{--acc:var(--a-lit)}
 .s-ist{--acc:var(--a-ist)}.s-bio{--acc:var(--a-bio)}.s-geo{--acc:var(--a-geo)}
 .s-obs{--acc:var(--a-obs)}.s-inf{--acc:var(--a-inf)}
+.s-izo{--acc:var(--a-izo)}.s-muz{--acc:var(--a-muz)}.s-teh{--acc:var(--a-teh)}.s-fiz{--acc:var(--a-fiz)}
 
 section{display:flex;flex-direction:column;gap:14px}
 .q-band{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 16px;padding:12px 18px;background:var(--pen-soft);border:1px solid var(--rule);border-left:3px solid var(--pen);border-radius:var(--r)}
@@ -134,6 +138,7 @@ section{display:flex;flex-direction:column;gap:14px}
 @media print{.ls .tp a{color:var(--ink);border-bottom:0}.ls .tp a.u2{display:none}}
 .rus{--acc:var(--a-rus)}.mat{--acc:var(--a-mat)}.eng{--acc:var(--a-eng)}.lit{--acc:var(--a-lit)}
 .ist{--acc:var(--a-ist)}.bio{--acc:var(--a-bio)}.geo{--acc:var(--a-geo)}.obs{--acc:var(--a-obs)}.inf{--acc:var(--a-inf)}
+.izo{--acc:var(--a-izo)}.muz{--acc:var(--a-muz)}.teh{--acc:var(--a-teh)}.fiz{--acc:var(--a-fiz)}
 .badge{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:2px;padding:1px 5px;margin-left:4px;white-space:nowrap}
 .b-test{color:var(--red);background:var(--red-soft)}
 /* уроки аттестации ЕдПалм: видны сразу */
@@ -180,7 +185,7 @@ body{background:#fff}
 </div>
 </header>
 <div class="filters">
-<div class="frow"><span class="flab">Предмет</span><button type="button" class="chip-s all" id="chipAll" aria-pressed="true">Все</button><button type="button" class="chip-s s-rus" data-s="rus" aria-pressed="true">Русский</button><button type="button" class="chip-s s-mat" data-s="mat" aria-pressed="true">Математика</button><button type="button" class="chip-s s-eng" data-s="eng" aria-pressed="true">Английский</button><button type="button" class="chip-s s-lit" data-s="lit" aria-pressed="true">Литература</button><button type="button" class="chip-s s-ist" data-s="ist" aria-pressed="true">История</button><button type="button" class="chip-s s-bio" data-s="bio" aria-pressed="true">Биология</button><button type="button" class="chip-s s-geo" data-s="geo" aria-pressed="true">География</button><button type="button" class="chip-s s-obs" data-s="obs" aria-pressed="true">Обществознание</button><button type="button" class="chip-s s-inf" data-s="inf" aria-pressed="true">Информатика</button></div>
+<div class="frow"><span class="flab">Предмет</span><button type="button" class="chip-s all" id="chipAll" aria-pressed="true">Все</button><button type="button" class="chip-s s-rus" data-s="rus" data-ab="Рус" aria-pressed="true">Русский</button><button type="button" class="chip-s s-mat" data-s="mat" data-ab="Мат" aria-pressed="true">Математика</button><button type="button" class="chip-s s-eng" data-s="eng" data-ab="Англ" aria-pressed="true">Английский</button><button type="button" class="chip-s s-lit" data-s="lit" data-ab="Лит" aria-pressed="true">Литература</button><button type="button" class="chip-s s-ist" data-s="ist" data-ab="Ист" aria-pressed="true">История</button><button type="button" class="chip-s s-bio" data-s="bio" data-ab="Био" aria-pressed="true">Биология</button><button type="button" class="chip-s s-geo" data-s="geo" data-ab="Гео" aria-pressed="true">География</button><button type="button" class="chip-s s-obs" data-s="obs" data-ab="Общ" aria-pressed="true">Обществознание</button><button type="button" class="chip-s s-inf" data-s="inf" data-ab="Инф" aria-pressed="true">Информатика</button><button type="button" class="chip-s s-izo" data-s="izo" data-ab="ИЗО" aria-pressed="true">ИЗО</button><button type="button" class="chip-s s-muz" data-s="muz" data-ab="Муз" aria-pressed="true">Музыка</button><button type="button" class="chip-s s-teh" data-s="teh" data-ab="Тех" aria-pressed="true">Технология</button><button type="button" class="chip-s s-fiz" data-s="fiz" data-ab="ФК" aria-pressed="true">Физкультура</button></div>
 <div class="frow"><span class="flab">Период</span>
 <select class="per" id="period" aria-label="Период">
 <option value="all">Весь учебный год</option>
@@ -739,7 +744,13 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
       if (ab && !ABBR[s]) ABBR[s] = ab.textContent;
     });
   });
-  all(".chip-s[data-s]").forEach(function (c) { var s = c.getAttribute("data-s"); ORDER.push(s); NAMES[s] = c.textContent; });
+  all(".chip-s[data-s]").forEach(function (c) {
+    var s = c.getAttribute("data-s");
+    ORDER.push(s); NAMES[s] = c.textContent;
+    /* Короткая подпись: у предметов без единого урока её неоткуда взять из
+       разметки дня, поэтому генератор кладёт её в data-ab самой фишки. */
+    if (!ABBR[s]) ABBR[s] = c.getAttribute("data-ab") || "";
+  });
 
   var EDITS = PE.norm({}), editsJson = "", editing = false, session = null, busy = false, missing = false;
 
