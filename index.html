@@ -128,6 +128,8 @@
   .pm-dlg p{margin:0;font-size:13px;line-height:1.4;color:var(--muted)}
   .pm-dlg input{font:15px/1.35 inherit;padding:10px;border:1px solid var(--line);border-radius:8px;min-height:44px}
   .pm-dlg .err{color:var(--red)}
+  /* строка с названием урока в окне подтверждения */
+  .pm-dlg .les{color:var(--ink);font-size:14px;font-weight:600;line-height:1.35}
   .pm-dlg .acts{display:flex;gap:8px;justify-content:flex-end}
   .pm-dlg button{font:600 14px/1 inherit;padding:10px 14px;border-radius:8px;border:1px solid var(--line);
     background:var(--sheet-2);color:var(--ink);min-height:40px;cursor:pointer}
@@ -216,6 +218,21 @@
       <div class="acts">
         <button type="button" id="pmCancel">Отмена</button>
         <button type="submit" id="pmGo">Войти</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Подтверждение отметки. Один диалог на все случаи: заголовок, пояснение
+       и подпись кнопки подставляются из toggle(). method="dialog" закрывает
+       окно сам, а нажатая кнопка попадает в returnValue. -->
+  <dialog id="cfDlg" class="pm-dlg">
+    <form id="cfForm" method="dialog">
+      <h3 id="cfTitle">Подтверждение</h3>
+      <p id="cfLesson" class="les"></p>
+      <p id="cfText"></p>
+      <div class="acts">
+        <button type="button" id="cfCancel">Отмена</button>
+        <button type="submit" id="cfGo" value="ok">Отправить</button>
       </div>
     </form>
   </dialog>
@@ -491,21 +508,82 @@
   function isDone(id) { return statusOf(id) !== ""; }
   function isConfirmed(id) { return statusOf(id) === "done"; }
 
+  /* Окно подтверждения. Диалог один на все действия: подставляем заголовок,
+     название урока, пояснение и подпись кнопки. Согласие приходит событием
+     close с returnValue "ok" — его даёт кнопка value="ok". Если у браузера
+     нет <dialog>, действие выполняется сразу, как было раньше. */
+  var cfDlg = document.getElementById("cfDlg");
+  var cfTitle = document.getElementById("cfTitle"), cfLesson = document.getElementById("cfLesson"),
+      cfText = document.getElementById("cfText"), cfGo = document.getElementById("cfGo"),
+      cfPending = null;
+
+  function ask(o, onYes) {
+    if (!cfDlg || !cfDlg.showModal) { onYes(); return; }
+    cfTitle.textContent = o.title;
+    cfLesson.textContent = o.lesson;
+    cfText.textContent = o.text;
+    cfGo.textContent = o.go;
+    cfPending = onYes;
+    cfDlg.returnValue = "";
+    cfDlg.showModal();
+    cfGo.focus();
+  }
+
+  if (cfDlg) {
+    document.getElementById("cfCancel").addEventListener("click", function () { cfDlg.close(""); });
+    cfDlg.addEventListener("close", function () {
+      var fn = cfPending; cfPending = null;
+      if (cfDlg.returnValue === "ok" && fn) fn();
+    });
+  }
+
+  /* Название урока для окна подтверждения: «Русский язык — Фонетика и орфоэпия». */
+  function lessonLabel(id) {
+    var L = lessonOf(id);
+    if (!L) return "Урок";
+    var n = (DATA.subj[L.s] && DATA.subj[L.s].n) || "";
+    return n ? n + " — " + L.t : L.t;
+  }
+
   /* Ученик отмечает выполнение — урок уходит на проверку.
-     Подтверждает урок только родитель, в режиме родителя. */
+     Подтверждает урок только родитель, в режиме родителя.
+     Каждое изменение статуса сначала спрашивает подтверждение: промах по карточке
+     в списке стоит дорого — отметка уходит в базу на оба устройства. */
   function toggle(id) {
-    var st = statusOf(id);
+    var st = statusOf(id), label = lessonLabel(id);
+    function apply(fn) { return function () { fn(); save(); render(); }; }
+
     if (parentMode) {
-      marks[id] = (st === "done") ? "check:" + today : today;
-    } else {
-      /* Пока родитель не подтвердил, ученик может снять свою отметку —
-         отметил не тот урок или решил доделать. Подтверждённый снять нельзя. */
-      if (st === "done") { toast("Урок уже подтверждён родителем"); return; }
-      if (st === "check") { delete marks[id]; toast("Отметка снята"); }
-      else { marks[id] = "check:" + today; }
+      if (st === "done") {
+        ask({ title: "Вернуть урок на проверку?", lesson: label,
+              text: "Подтверждение будет снято, и урок снова попадёт в список ожидающих проверки.",
+              go: "Вернуть" },
+            apply(function () { marks[id] = "check:" + today; toast("Урок возвращён на проверку"); }));
+      } else {
+        ask({ title: "Подтвердить выполнение урока?", lesson: label,
+              text: st === "check"
+                ? "Урок будет отмечен как проверенный и уйдёт из списка на проверке."
+                : "Урок будет сразу отмечен как выполненный и подтверждённый.",
+              go: "Подтвердить" },
+            apply(function () { marks[id] = today; toast("Выполнение подтверждено"); }));
+      }
+      return;
     }
-    save();
-    render();
+
+    /* Пока родитель не подтвердил, ученик может снять свою отметку —
+       отметил не тот урок или решил доделать. Подтверждённый снять нельзя. */
+    if (st === "done") { toast("Урок уже подтверждён родителем"); return; }
+    if (st === "check") {
+      ask({ title: "Снять отметку?", lesson: label,
+            text: "Урок снова станет невыполненным и исчезнет из списка на проверке.",
+            go: "Снять" },
+          apply(function () { delete marks[id]; toast("Отметка снята"); }));
+    } else {
+      ask({ title: "Отправить урок на проверку?", lesson: label,
+            text: "Урок будет отмечен как выполненный, родитель увидит его в списке на проверку.",
+            go: "Отправить" },
+          apply(function () { marks[id] = "check:" + today; toast("Урок отправлен на проверку"); }));
+    }
   }
 
   /* ── Хранилище ──
