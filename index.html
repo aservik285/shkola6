@@ -120,6 +120,15 @@
   /* режим родителя в трекере */
   .bar .pm{font-weight:600}
   .bar .pm.on{background:var(--red);border-color:var(--red);color:#fff}
+  /* Экран «войдите»: показывается вместо сводки, долгов и списка уроков,
+     когда страница не знает, чьи отметки показывать. */
+  .needlogin{background:var(--sheet);border:1px solid var(--line);border-radius:12px;
+    padding:18px;margin-bottom:12px}
+  .needlogin h2{margin:0 0 6px;font-size:17px}
+  .needlogin p{margin:0;font-size:14px;line-height:1.45;color:var(--muted)}
+  body.need-login .today-line,body.need-login .prog,body.need-login .summary,
+  body.need-login .group,body.need-login .foot{display:none}
+
   .pm-dlg{border:1px solid var(--line);border-radius:12px;padding:0;max-width:min(420px,calc(100vw - 32px));
     background:var(--sheet);color:var(--ink)}
   .pm-dlg::backdrop{background:rgba(15,20,32,.45)}
@@ -238,6 +247,14 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Пока не вошли, база отметок недоступна, и показывать «долги» нельзя:
+       пустые отметки выглядят как полный провал по всем предметам. -->
+  <div class="needlogin" id="needLogin" hidden>
+    <h2>Войдите, чтобы увидеть свои уроки</h2>
+    <p>Отметки хранятся под вашей учётной записью. Нажмите «Вход» вверху справа
+       и введите свою почту и пароль — список уроков и отметки появятся сразу.</p>
+  </div>
 
   <div class="today-line">
     <h1 id="dayTitle">—</h1>
@@ -565,6 +582,9 @@
      Каждое изменение статуса сначала спрашивает подтверждение: промах по карточке
      в списке стоит дорого — отметка уходит в базу на оба устройства. */
   function toggle(id) {
+    /* Без входа отметка не дойдёт до базы: запись идёт от имени вошедшего.
+       Лучше сказать сразу, чем дать поставить галочку, которая пропадёт. */
+    if (sb && !(SESS && SESS.token)) { toast("Войдите, чтобы отмечать уроки"); return; }
     var st = statusOf(id), label = lessonLabel(id);
     function apply(fn) { return function () { fn(); save(); render(); }; }
 
@@ -613,23 +633,51 @@
   var sb = (CFG.url && CFG.key) ? { url: String(CFG.url).replace(/\/+$/, ""), key: CFG.key } : null;
   var poll = null, lastSaveAt = 0;
 
-  function sbHeaders(extra) {
-    var h = { "apikey": sb.key, "Authorization": "Bearer " + sb.key };
+  function sbHeaders(token, extra) {
+    var h = { "apikey": sb.key, "Authorization": "Bearer " + (token || sb.key) };
     if (extra) { for (var k in extra) if (extra.hasOwnProperty(k)) h[k] = extra[k]; }
     return h;
   }
   function sbRow() { return sb.url + "/rest/v1/progress?student=eq." + encodeURIComponent(sid); }
 
+  /* Свежий токен сессии. Токен живёт час, а страница у детей открыта весь день,
+     поэтому перед каждым обращением к базе проверяем срок и при нужде меняем
+     токен по токену обновления. Обновление идёт в один поток: если пустить два
+     сразу, второй получит отказ — токен обновления одноразовый. */
+  var refreshing = null;
+  function tokenReady() {
+    if (!SESS || !SESS.token) return Promise.resolve(null);
+    if (Date.now() < SESS.exp - 120000) return Promise.resolve(SESS.token);
+    if (!refreshing) {
+      refreshing = fetch(sb.url + "/auth/v1/token?grant_type=refresh_token", {
+        method: "POST",
+        headers: { apikey: sb.key, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: SESS.refresh })
+      }).then(function (r) {
+        if (!r.ok) throw new Error("refresh");
+        return r.json();
+      }).then(function (d) {
+        keepSession(d); return SESS.token;
+      }).catch(function () {
+        sessClear(); pmLabel(); return null;
+      }).then(function (t) { refreshing = null; return t; });
+    }
+    return refreshing;
+  }
+
   function save() {
     if (sb) {
-      lastSaveAt = Date.now();
-      fetch(sbRow(), {
-        method: "PATCH",
-        headers: sbHeaders({ "Content-Type": "application/json", "Prefer": "return=minimal" }),
-        body: JSON.stringify({ marks: marks, updated_at: new Date().toISOString() })
-      }).then(function (r) {
-        if (!r.ok) throw new Error(r.status);
-        setSync("on", "синхронизируется между устройствами");
+      tokenReady().then(function (t) {
+        if (!t) { setSync("off", "войдите, чтобы отметка сохранилась"); return; }
+        lastSaveAt = Date.now();
+        return fetch(sbRow(), {
+          method: "PATCH",
+          headers: sbHeaders(t, { "Content-Type": "application/json", "Prefer": "return=minimal" }),
+          body: JSON.stringify({ marks: marks, updated_at: new Date().toISOString() })
+        }).then(function (r) {
+          if (!r.ok) throw new Error(r.status);
+          setSync("on", "синхронизируется между устройствами");
+        });
       }).catch(function () { setSync("off", "не сохранилось — проверьте связь"); });
     } else if (db) {
       db.doc("progress/" + sid).set({ marks: marks, at: Date.now() })
@@ -643,15 +691,21 @@
      цикл, чтобы не затереть только что сделанную отметку старым ответом. */
   function pull(force) {
     if (!force && Date.now() - lastSaveAt < 4000) return;
-    fetch(sbRow() + "&select=marks", { headers: sbHeaders(null) })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (rows) {
-        if (!rows || !rows.length) { setSync("off", "строка ученика не найдена в базе"); return; }
-        var remote = rows[0].marks || {};
-        if (JSON.stringify(remote) !== JSON.stringify(marks)) { marks = remote; render(); }
-        setSync("on", "синхронизируется между устройствами");
-      })
-      .catch(function () { setSync("off", "нет связи с базой"); });
+    tokenReady().then(function (t) {
+      if (!t) {
+        if (Object.keys(marks).length) { marks = {}; render(); }
+        setSync("off", "войдите, чтобы увидеть свои отметки");
+        return;
+      }
+      return fetch(sbRow() + "&select=marks", { headers: sbHeaders(t, null) })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (rows) {
+          if (!rows || !rows.length) { setSync("off", "строка ученика не найдена в базе"); return; }
+          var remote = rows[0].marks || {};
+          if (JSON.stringify(remote) !== JSON.stringify(marks)) { marks = remote; render(); }
+          setSync("on", "синхронизируется между устройствами");
+        });
+    }).catch(function () { setSync("off", "нет связи с базой"); });
   }
 
   /* Правки плана подтягиваются тем же циклом, что и отметки. Если таблицы
@@ -855,6 +909,12 @@
       });
       who.appendChild(b);
     });
+
+    /* Без входа отметок нет, и всё остальное показало бы неправду:
+       ноль пройденного и сотню долгов. Прячем до входа. */
+    var needLogin = !!sb && !(SESS && SESS.token);
+    document.body.classList.toggle("need-login", needLogin);
+    document.getElementById("needLogin").hidden = !needLogin;
 
     var dt = document.getElementById("dayTitle");
     dt.textContent = human(today);
@@ -1077,6 +1137,9 @@
       pmLabel(); watch(); return;
     }
     pmLabel(); render();
+    /* Отметки за вход не ждут опроса: иначе после входа список ещё
+       двенадцать секунд выглядел бы пустым. */
+    if (sb) pull(true);
   }
 
   function keepSession(d) {

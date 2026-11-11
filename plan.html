@@ -600,7 +600,10 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
   <form id="peLoginForm">
     <h2>Режим родителя</h2>
     <p class="hint">Здесь можно переносить уроки между днями, добавлять, удалять и переименовывать их, прикреплять файлы и заказывать задания. Правки сразу увидят все устройства, включая «Ленту уроков».</p>
-    <label>Пароль родителя
+    <label>Почта
+      <input type="email" id="peMail" autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="email" required>
+    </label>
+    <label>Пароль
       <input type="password" id="pePass" autocomplete="current-password" autocapitalize="off" spellcheck="false" required>
     </label>
     <p class="err" id="peLoginErr" hidden></p>
@@ -719,7 +722,9 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
   if (!PE || !document.querySelector(".day[data-d]")) return;
 
   var canRead = !!(CFG.url && CFG.key && window.fetch);
-  var canEdit = canRead && !!CFG.parent && !!window.HTMLDialogElement;
+  /* Раньше правка включалась только при адресе родителя в настройках страницы.
+     Теперь адрес вводится при входе, и настройка для этого не нужна. */
+  var canEdit = canRead && !!window.HTMLDialogElement;
   var API = canRead ? String(CFG.url).replace(/\/+$/, "") : "";
   var MAX_MB = 20;
 
@@ -983,26 +988,35 @@ dialog.pe::backdrop{background:rgba(15,20,32,.45)}
     if (on) refreshQueue();
   }
 
-  var loginDlg = byId("peLogin"), passEl = byId("pePass"), loginErr = byId("peLoginErr"), loginGo = byId("peLoginGo");
+  var loginDlg = byId("peLogin"), mailEl = byId("peMail"), passEl = byId("pePass"),
+      loginErr = byId("peLoginErr"), loginGo = byId("peLoginGo");
+
+  /* Почту помним на устройстве: вводить её каждый раз незачем, а пароль
+     не хранится нигде и уходит только в Supabase Auth. */
+  function lastMail() { try { return localStorage.getItem("mail") || ""; } catch (e) { return ""; } }
+  function rememberMail(m) { try { localStorage.setItem("mail", m); } catch (e) {} }
+
   loginBtn.addEventListener("click", function () {
     if (editing) { setEditing(false); toast("Режим родителя выключен"); return; }
     if (missing) { toast("Правки ещё не настроены: в базе нет таблицы plan_edits"); return; }
     showErr(loginErr, ""); passEl.value = "";
-    loginDlg.showModal(); passEl.focus();
+    mailEl.value = lastMail() || CFG.parent || "";
+    loginDlg.showModal();
+    (mailEl.value ? passEl : mailEl).focus();
   });
   byId("peLoginCancel").addEventListener("click", function () { passEl.value = ""; loginDlg.close(); });
   byId("peLoginForm").addEventListener("submit", function (ev) {
     ev.preventDefault();
-    var pw = passEl.value;
-    if (!pw) return;
+    var mail = (mailEl.value || "").trim(), pw = passEl.value;
+    if (!mail || !pw) return;
     loginGo.disabled = true; showErr(loginErr, "");
-    auth("password", { email: CFG.parent, password: pw }).then(function (j) {
-      keep(j); passEl.value = ""; loginDlg.close();
+    auth("password", { email: mail, password: pw }).then(function (j) {
+      keep(j); rememberMail(mail); passEl.value = ""; loginDlg.close();
       setEditing(true); toast("Режим родителя включён");
       if (pendingLock) { var u = pendingLock; pendingLock = null; openLocked(u); }
     }).catch(function (e) {
       passEl.value = ""; passEl.focus();
-      showErr(loginErr, e.status === 400 ? "Неверный пароль."
+      showErr(loginErr, e.status === 400 ? "Неверная почта или пароль."
         : e.status === 429 ? "Слишком много попыток. Подождите несколько минут."
         : "Не удалось войти. Проверьте связь.");
     }).then(function () { loginGo.disabled = false; });
