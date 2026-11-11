@@ -204,15 +204,17 @@
       <select id="day" aria-label="Учебный день"></select>
       <button type="button" id="next" aria-label="Следующий день">›</button>
       <button type="button" id="todayBtn" class="wide">Сегодня</button>
-      <button type="button" id="pmBtn" class="pm">Родитель</button>
+      <button type="button" id="pmBtn" class="pm">Вход</button>
     </div>
   </div>
 
   <dialog id="pmDlg" class="pm-dlg">
     <form id="pmForm">
-      <h3>Режим родителя</h3>
-      <p>Ученик отмечает урок как выполненный — урок уходит на проверку.
-         Подтвердить выполнение может только родитель. Введите пароль режима родителя.</p>
+      <h3>Вход</h3>
+      <p>Ученик входит под своей записью: страница сама покажет его уроки.
+         Подтверждать выполнение может только родитель. Без входа страница
+         работает как раньше.</p>
+      <input type="email" id="pmMail" autocomplete="username" placeholder="Почта" inputmode="email">
       <input type="password" id="pmPass" autocomplete="current-password" placeholder="Пароль">
       <p class="err" id="pmErr" hidden></p>
       <div class="acts">
@@ -480,6 +482,9 @@
   var STUDENTS = [{ id: "s1", name: "Лёша" }, { id: "s2", name: "Юра" }];
   var sid = "s1", today = DATA.days[0], marks = {}, db = null, unsub = null, showAllDebts = false;
   var showAllChecks = false, parentMode = false, toastTimer = null;
+  /* Кто вошёл на этом устройстве: {uid, email, role, code, name, token, refresh, exp}.
+     null — вошли не под кем, страница работает как раньше. */
+  var SESS = null;
 
   /* короткое сообщение внизу экрана */
   function toast(text) {
@@ -832,9 +837,15 @@
 
   /* ── Отрисовка ── */
   function render() {
+    /* Вошедший ученик видит только себя: чужую ленту ему показывать незачем,
+       да и промахнуться по кнопке он больше не может. Родителю и тому,
+       кто не входил, переключатель остаётся. */
     var who = document.getElementById("who");
     who.innerHTML = "";
-    STUDENTS.forEach(function (st) {
+    var list = (SESS && SESS.role === "student" && SESS.code)
+      ? STUDENTS.filter(function (st) { return st.id === SESS.code; })
+      : STUDENTS;
+    list.forEach(function (st) {
       var b = document.createElement("button");
       b.type = "button"; b.textContent = st.name;
       b.setAttribute("aria-pressed", st.id === sid ? "true" : "false");
@@ -1027,50 +1038,143 @@
     watch();
   }
 
-  /* ── Режим родителя: подтверждение выполненных уроков ──
-     Пароль проверяет Supabase Auth, на странице он не хранится. Режим живёт,
-     пока открыта вкладка. Это разделение ролей, а не защита базы: отметки
-     по-прежнему пишутся публичным ключом. */
+  /* ── Вход и роли ──
+     Каждый заходит под своей записью Supabase Auth: родитель получает право
+     подтверждать уроки, ученик сразу попадает на свой список и переключателем
+     учеников не пользуется.
+
+     Этап 1: вход решает только, что показывать и что разрешать на странице.
+     Отметки по-прежнему читаются и пишутся публичным ключом, как раньше, —
+     поэтому пока вход не обязателен и без него всё работает по-старому.
+     Доступ к данным по ролям включается на этапе 2, когда все трое войдут
+     со своих устройств. */
   var pmBtn = document.getElementById("pmBtn"), pmDlg = document.getElementById("pmDlg"),
-      pmPass = document.getElementById("pmPass"), pmErr = document.getElementById("pmErr"),
-      pmGo = document.getElementById("pmGo");
+      pmMail = document.getElementById("pmMail"), pmPass = document.getElementById("pmPass"),
+      pmErr = document.getElementById("pmErr"), pmGo = document.getElementById("pmGo");
+
+  /* Сессия хранится на устройстве, чтобы не вводить пароль каждый день.
+     Там же лежит токен обновления — он даёт доступ только к данным этого же
+     ученика, поэтому телефон с чужими руками опаснее не становится. */
+  function sessLoad() { try { SESS = JSON.parse(lsGet("sess", "null")); } catch (e) { SESS = null; } }
+  function sessSave() { lsSet("sess", SESS ? JSON.stringify(SESS) : "null"); }
+  function sessClear() { SESS = null; try { localStorage.removeItem("sess"); } catch (e) {} }
 
   function pmLabel() {
-    pmBtn.textContent = parentMode ? "Родитель: вкл" : "Родитель";
+    var t = "Вход";
+    if (SESS && SESS.role === "parent") t = "Родитель";
+    else if (SESS && SESS.name) t = SESS.name;
+    pmBtn.textContent = t;
     pmBtn.className = "pm" + (parentMode ? " on" : "");
   }
-  if (!sb || !CFG.parent) { pmBtn.hidden = true; } else { pmLabel(); }
+  if (!sb) { pmBtn.hidden = true; }
+
+  /* Кто вошёл — то и показываем. Ученика переносим на его ленту,
+     родителю оставляем переключатель и право подтверждать. */
+  function applyRole() {
+    parentMode = !!(SESS && SESS.role === "parent");
+    if (SESS && SESS.role === "student" && SESS.code && SESS.code !== sid) {
+      sid = SESS.code; lsSet("sid", sid); showAllDebts = false;
+      pmLabel(); watch(); return;
+    }
+    pmLabel(); render();
+  }
+
+  function keepSession(d) {
+    SESS = SESS || {};
+    SESS.token = d.access_token;
+    SESS.refresh = d.refresh_token || SESS.refresh;
+    SESS.exp = Date.now() + ((d.expires_in || 3600) * 1000);
+    if (d.user) { SESS.uid = d.user.id; SESS.email = d.user.email; }
+    sessSave();
+  }
+
+  /* Роль и имя лежат в profiles. Строку спрашиваем по своему uid:
+     родителю политика базы показывает всех, и без фильтра можно было бы
+     прочитать чужую строку вместо своей. */
+  function loadProfile() {
+    return fetch(sb.url + "/rest/v1/profiles?select=role,student_code,name&uid=eq." + encodeURIComponent(SESS.uid), {
+      headers: { apikey: sb.key, Authorization: "Bearer " + SESS.token }
+    }).then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (rows) {
+        var p = rows && rows[0];
+        SESS.role = (p && p.role) || "";
+        SESS.code = (p && p.student_code) || "";
+        SESS.name = (p && p.name) || SESS.email || "";
+        /* Страховка на случай, если страницу залили раньше, чем завели
+           профили: родителя узнаём по адресу из настроек, как раньше. */
+        if (!SESS.role && CFG.parent && SESS.email
+            && SESS.email.toLowerCase() === String(CFG.parent).toLowerCase()) {
+          SESS.role = "parent"; SESS.name = "Родитель";
+        }
+        sessSave(); applyRole();
+        return SESS;
+      });
+  }
+
+  function signIn(email, pw) {
+    return fetch(sb.url + "/auth/v1/token?grant_type=password", {
+      method: "POST",
+      headers: { apikey: sb.key, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: pw })
+    }).then(function (r) {
+      if (!r.ok) { var e = new Error("login"); e.status = r.status; throw e; }
+      return r.json();
+    }).then(function (d) { keepSession(d); return loadProfile(); });
+  }
+
+  /* Токен живёт час. Если он просрочен — молча меняем его по токену
+     обновления; не вышло — просто забываем вход, страница останется рабочей. */
+  function sessRestore() {
+    sessLoad();
+    if (!sb || !SESS || !SESS.token) { pmLabel(); return; }
+    if (Date.now() < SESS.exp - 120000) { applyRole(); return; }
+    fetch(sb.url + "/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      headers: { apikey: sb.key, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: SESS.refresh })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("refresh");
+      return r.json();
+    }).then(function (d) { keepSession(d); applyRole(); })
+      .catch(function () { sessClear(); pmLabel(); render(); });
+  }
 
   pmBtn.addEventListener("click", function () {
-    if (parentMode) { parentMode = false; pmLabel(); render(); toast("Режим родителя выключен"); return; }
+    if (SESS && SESS.token) {
+      ask({ title: "Выйти?", lesson: SESS.name || SESS.email || "",
+            text: "Страница останется рабочей, но подтверждать уроки и видеть своё имя вы перестанете.",
+            go: "Выйти" },
+          function () {
+            sessClear(); parentMode = false; pmLabel(); render(); toast("Вы вышли");
+          });
+      return;
+    }
     pmErr.hidden = true; pmPass.value = "";
-    pmDlg.showModal(); pmPass.focus();
+    pmMail.value = lsGet("mail", "");
+    pmDlg.showModal();
+    (pmMail.value ? pmPass : pmMail).focus();
   });
   document.getElementById("pmCancel").addEventListener("click", function () { pmPass.value = ""; pmDlg.close(); });
   document.getElementById("pmForm").addEventListener("submit", function (ev) {
     ev.preventDefault();
-    var pw = pmPass.value;
-    if (!pw) return;
+    var mail = (pmMail.value || "").trim(), pw = pmPass.value;
+    if (!mail || !pw) return;
     pmGo.disabled = true; pmErr.hidden = true;
-    fetch(sb.url + "/auth/v1/token?grant_type=password", {
-      method: "POST",
-      headers: { apikey: sb.key, "Content-Type": "application/json" },
-      body: JSON.stringify({ email: CFG.parent, password: pw })
-    }).then(function (r) {
-      if (!r.ok) { var e = new Error("login"); e.status = r.status; throw e; }
-      return r.json();
-    }).then(function () {
+    signIn(mail, pw).then(function () {
+      lsSet("mail", mail);
       pmPass.value = ""; pmDlg.close();
-      parentMode = true; pmLabel(); render();
-      toast("Режим родителя включён: нажимайте урок, чтобы подтвердить");
+      toast(parentMode ? "Вход родителя: нажимайте урок, чтобы подтвердить"
+                       : "Здравствуй, " + (SESS.name || mail));
     }, function (e) {
       pmPass.value = ""; pmPass.focus();
       pmErr.hidden = false;
-      pmErr.textContent = e.status === 400 ? "Неверный пароль."
+      pmErr.textContent = e.status === 400 ? "Неверная почта или пароль."
         : e.status === 429 ? "Слишком много попыток. Подождите несколько минут."
         : "Не удалось войти. Проверьте связь.";
     }).then(function () { pmGo.disabled = false; });
   });
+
+  sessRestore();
 
   var schoolDays = 0;
   DATA.daySubj.forEach(function (row) { if (row && row.length) schoolDays++; });
