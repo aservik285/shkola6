@@ -9,6 +9,12 @@
 # (anon) ключ — тот же, что лежит в index.html и plan.html. Служебный ключ
 # (service_role) сюда класть нельзя ни в каком виде.
 #
+# Запрашивается plan_edits: это единственная таблица, открытая на чтение без
+# входа. 11.11.2026 у progress и task_requests права анонима отозваны — туда
+# теперь пускают только по учётной записи, и прежний запрос к progress стал
+# возвращать 401. Если понадобится сменить таблицу снова, годится только та,
+# что отвечает 200 без входа, иначе запуск будет падать каждый раз.
+#
 # Если запрос не прошёл, GitHub пришлёт письмо о неудачном запуске — это
 # ранний сигнал, что с базой что-то не так.
 
@@ -37,11 +43,17 @@ jobs:
           fi
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
             -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
-            "$URL/rest/v1/progress?select=student&limit=1" || echo 000)
+            "$URL/rest/v1/plan_edits?select=id&limit=1" || echo 000)
           echo "Ответ базы: HTTP $code"
           if [ "$code" = "000" ]; then
             echo "База не ответила совсем. Скорее всего, проект уже на паузе:"
             echo "зайдите на supabase.com и нажмите Restore."
+            exit 1
+          fi
+          if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "База жива, но запрос отклонён (HTTP $code)."
+            echo "Либо сменился ключ в секрете SUPABASE_ANON_KEY,"
+            echo "либо у таблицы plan_edits закрыли чтение без входа."
             exit 1
           fi
           if [ "$code" != "200" ]; then
