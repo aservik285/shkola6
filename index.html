@@ -143,6 +143,19 @@
   .pm-dlg button{font:600 14px/1 inherit;padding:10px 14px;border-radius:8px;border:1px solid var(--line);
     background:var(--sheet-2);color:var(--ink);min-height:40px;cursor:pointer}
   .pm-dlg button[type="submit"]{background:var(--red);border-color:var(--red);color:#fff}
+  /* окно приёмки урока: что полагается по тарифу и что родитель решил на самом деле */
+  .ac-dlg{max-width:min(460px,calc(100vw - 32px))}
+  .ac-dlg .row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+  .ac-dlg label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:700;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .ac-dlg label input{width:96px}
+  .ac-dlg textarea{font:14px/1.35 inherit;padding:10px;border:1px solid var(--line);border-radius:8px;
+    resize:vertical;min-height:54px;background:var(--sheet);color:var(--ink);width:100%;box-sizing:border-box}
+  .ac-dlg .gr{min-width:46px}
+  .ac-dlg .gr.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .ac-dlg .why{font-size:13.5px;font-weight:600;color:var(--ink)}
+  .ac-dlg .when b{color:var(--red)}
+  .ac-dlg .acts{flex-wrap:wrap}
   /* всплывающая подсказка */
   .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;
     background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:10px 14px;border-radius:8px;
@@ -187,6 +200,12 @@
   .chip{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
     border-radius:3px;padding:2px 6px;white-space:nowrap}
   .chip.d{color:var(--red);background:var(--red-soft);border:1px solid var(--red-line)}
+  /* урок, возвращённый родителем на доработку: замечание видно прямо в карточке */
+  .chip.rw{color:#fff;background:var(--red)}
+  .chip.pts{color:#0B5D2A;background:#E7F5EC}
+  .card.rew{background:#FFF6F6;border-left-color:var(--red)}
+  .card.rew .tick{border-color:var(--red);color:var(--red);background:#fff}
+  .note-rew{font-size:12.5px;color:var(--ink-2);line-height:1.35;margin-top:3px}
 
   .empty{padding:20px 16px;text-align:center;color:var(--muted);font-size:14px;
     background:var(--sheet);border:1px dashed var(--rule);border-radius:var(--r)}
@@ -244,6 +263,48 @@
       <div class="acts">
         <button type="button" id="cfCancel">Отмена</button>
         <button type="submit" id="cfGo" value="ok">Отправить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Приёмка урока. Открывается у родителя вместо простого подтверждения:
+       сразу видно, когда ученик отправил урок, в срок или нет и сколько
+       полагается по тарифу. Начисление можно снизить, обнулить или вернуть
+       к тарифу, а вместо приёмки — отдать на доработку с замечанием.
+       Поля результата и оценки показываются только для теста и аттестации. -->
+  <dialog id="acDlg" class="pm-dlg ac-dlg">
+    <form id="acForm" method="dialog">
+      <h3>Приёмка урока</h3>
+      <p id="acLesson" class="les"></p>
+      <p id="acWhen" class="when"></p>
+
+      <div class="row" id="acScoreRow" hidden>
+        <label>Набрано <input type="number" id="acScore" min="0" step="1" inputmode="numeric"></label>
+        <label>Максимум <input type="number" id="acMax" min="1" step="1" inputmode="numeric"></label>
+      </div>
+
+      <div class="row" id="acGradeRow" hidden>
+        <label>Оценка</label>
+        <button type="button" class="gr" data-g="5">5</button>
+        <button type="button" class="gr" data-g="4">4</button>
+        <button type="button" class="gr" data-g="3">3</button>
+        <button type="button" class="gr" data-g="2">2</button>
+      </div>
+
+      <div class="row">
+        <label>Баллов <input type="number" id="acPoints" min="0" step="5" inputmode="numeric"></label>
+        <button type="button" id="acZero">Без баллов</button>
+        <button type="button" id="acAuto">По тарифу</button>
+      </div>
+      <p id="acWhy" class="why"></p>
+
+      <label for="acNote">Замечание</label>
+      <textarea id="acNote" rows="2" placeholder="Видно ребёнку. Обязательно, если урок уходит на доработку."></textarea>
+
+      <div class="acts">
+        <button type="button" id="acCancel">Отмена</button>
+        <button type="button" id="acRework">На доработку</button>
+        <button type="submit" id="acGo" value="ok">Принять</button>
       </div>
     </form>
   </dialog>
@@ -432,6 +493,203 @@
 
 </script>
 <script>
+/* Баллы за уроки — общий код трекера, приёмки и будущего магазина.
+
+   Правило из ТЗ одно, а считать по нему придётся в трёх местах: ребёнок хочет
+   знать цену урока заранее, родитель видит её при приёмке, магазин показывает
+   баланс и цель. Если переписать расчёт трижды, три копии разойдутся в первый
+   же месяц, поэтому он живёт здесь, одним файлом.
+
+   Тарифы и шкалы лежат в базе (таблицы tariffs и tariff_scale) и правятся
+   без пересборки страниц. Значения ниже — те же самые, но зашиты в код
+   на случай, когда база недоступна или вход ещё не выполнен: лучше показать
+   ребёнку ожидаемую цену урока, чем прочерк. Начислить баллы без базы всё
+   равно нельзя — это делает родитель, и запись идёт через его сессию.
+
+   Вид урока берётся из ленты как есть. Незнакомый вид считается теорией:
+   пусть новый вид урока стоит дёшево, чем не стоит ничего и ломает приёмку. */
+(function (root) {
+  "use strict";
+
+  /* Запасные тарифы — копия строк из supabase\schema-04-priyomka.sql */
+  var ZAPAS = {
+    "практика":            { tariff: "практика",   on_time: 100, late_week: 50, late_more: 0 },
+    "речь":                { tariff: "практика",   on_time: 100, late_week: 50, late_more: 0 },
+    "теория":              { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "повторение":          { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "повторение 5 класса": { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "домашнее":            { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "разбор":              { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "резерв":              { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "Go Getter 1":         { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
+    "тест":                { tariff: "тест",       on_time: null, late_week: null, late_more: null },
+    "аттестация":          { tariff: "аттестация", on_time: null, late_week: null, late_more: null }
+  };
+
+  /* Шкалы: lo — нижняя граница, с которой действует строка. Для теста это
+     доля набранного от максимума, для аттестации — оценка. Строки идут
+     от большей границы к меньшей, берётся первая подходящая. */
+  var ZAPAS_SCALE = {
+    "тест":       [{ lo: 0.875, points: 1000 }, { lo: 0.666, points: 750 }, { lo: 0.416, points: 500 }, { lo: 0, points: 0 }],
+    "аттестация": [{ lo: 5, points: 500 }, { lo: 4, points: 250 }, { lo: 3, points: 0 }, { lo: 0, points: 0 }]
+  };
+
+  var TARIFFS = null, SCALE = null;   /* то, что пришло из базы */
+
+  function num(v) { return (v === null || v === undefined || v === "") ? null : Number(v); }
+
+  /* Строки таблиц базы -> рабочие справочники. Пустой ответ игнорируем:
+     значит таблиц ещё нет, и запасные значения уместнее пустоты. */
+  function load(tariffRows, scaleRows) {
+    if (tariffRows && tariffRows.length) {
+      var t = {};
+      tariffRows.forEach(function (r) {
+        t[r.kind] = { tariff: r.tariff, on_time: num(r.on_time), late_week: num(r.late_week), late_more: num(r.late_more) };
+      });
+      TARIFFS = t;
+    }
+    if (scaleRows && scaleRows.length) {
+      var s = {};
+      scaleRows.forEach(function (r) {
+        if (!s[r.tariff]) s[r.tariff] = [];
+        s[r.tariff].push({ lo: Number(r.lo), points: Number(r.points) });
+      });
+      Object.keys(s).forEach(function (k) { s[k].sort(function (a, b) { return b.lo - a.lo; }); });
+      SCALE = s;
+    }
+  }
+
+  function tariffs() { return TARIFFS || ZAPAS; }
+  function scale(name) { return (SCALE && SCALE[name]) || ZAPAS_SCALE[name] || []; }
+  function fromBase() { return !!TARIFFS; }
+
+  /* Тариф вида урока. Если вида нет в таблице базы, берём запасной тариф
+     именно этого вида и только потом — теорию. Иначе пропущенная в базе
+     строка «тест» превратила бы тысячу баллов в полсотни, и заметить это
+     было бы некому: расчёт выглядел бы исправным. */
+  function kindTariff(kind) {
+    var all = tariffs();
+    return all[kind] || ZAPAS[kind] || all["теория"] || ZAPAS["теория"];
+  }
+
+  function dayNum(d) {
+    if (!d) return null;
+    var p = String(d).split("-");
+    if (p.length !== 3) return null;
+    var t = Date.UTC(+p[0], +p[1] - 1, +p[2]);
+    return isNaN(t) ? null : t / 86400000;
+  }
+
+  function plural(n, a, b, c) {
+    n = Math.abs(n) % 100;
+    var d = n % 10;
+    if (n > 10 && n < 20) return c;
+    if (d > 1 && d < 5) return b;
+    if (d === 1) return a;
+    return c;
+  }
+
+  /* В срок или с опозданием. planOn — день, на который урок стоял в расписании,
+     sentOn — день, когда ученик отправил его на проверку. Считается именно
+     отправка, а не проверка: родитель может подтвердить урок через неделю,
+     и это не вина ребёнка (пункт 1 ТЗ).
+
+     Если плановая дата неизвестна (урок добавлен родителем вручную),
+     опоздания нет: наказывать за то, чего не было в расписании, не за что. */
+  function late(planOn, sentOn) {
+    var p = dayNum(planOn), s = dayNum(sentOn);
+    if (p === null || s === null) return { days: 0, bucket: "срок", text: "в срок" };
+    var d = s - p;
+    if (d <= 0) return { days: 0, bucket: "срок", text: "в срок" };
+    var text = "с задержкой " + d + " " + plural(d, "день", "дня", "дней");
+    return { days: d, bucket: d <= 7 ? "неделя" : "позже", text: text };
+  }
+
+  function byScale(name, value) {
+    var rows = scale(name);
+    for (var i = 0; i < rows.length; i++) if (value >= rows[i].lo) return rows[i].points;
+    return 0;
+  }
+
+  /* Сколько полагается за урок.
+       o.kind      вид урока из ленты
+       o.planOn    плановая дата, "2026-11-12"
+       o.sentOn    дата отправки на проверку
+       o.score     набрано (для теста)
+       o.scoreMax  максимум (для теста)
+       o.grade     оценка (для аттестации)
+
+     Возвращает { points, text, tariff, late, need }.
+     need — чего не хватает для расчёта: "score" у теста без результата,
+     "grade" у аттестации без оценки. При этом points равен нулю,
+     и приёмка знает, что надо спросить родителя. */
+  function count(o) {
+    o = o || {};
+    var t = kindTariff(o.kind), l = late(o.planOn, o.sentOn);
+    var res = { points: 0, text: "", tariff: t.tariff, late: l, need: null };
+
+    if (t.tariff === "тест") {
+      var max = num(o.scoreMax), got = num(o.score);
+      if (!max || max <= 0 || got === null) { res.need = "score"; res.text = "нужен результат теста"; return res; }
+      var share = Math.max(0, Math.min(1, got / max));
+      res.points = byScale("тест", share);
+      res.share = share;
+      res.text = "тест: " + got + " из " + max + " — " + Math.round(share * 100) + " %";
+      return res;
+    }
+
+    if (t.tariff === "аттестация") {
+      var g = num(o.grade);
+      if (g === null) { res.need = "grade"; res.text = "нужна оценка"; return res; }
+      res.points = byScale("аттестация", g);
+      res.text = "аттестация, оценка " + g;
+      return res;
+    }
+
+    var base = l.bucket === "срок" ? t.on_time : (l.bucket === "неделя" ? t.late_week : t.late_more);
+    res.points = base === null ? 0 : base;
+    res.text = (o.kind || "урок") + ", " + l.text;
+    return res;
+  }
+
+  /* Тарифы из базы. Читают их все вошедшие, поэтому отдельного права
+     не нужно — хватает токена сессии. Молчание базы не ошибка:
+     остаются запасные значения.
+
+     Отказ ловится через .then(null, …), а не .catch: тем же файлом
+     пользуется проверка tests\proverka-ballov.js, а её движок считает
+     catch зарезервированным словом и спотыкается о него как об имя
+     свойства. Смысл тот же, а проверка гоняет настоящий файл,
+     а не его урезанную копию. */
+  function fetchTariffs(cfg, token) {
+    if (!cfg || !cfg.url || !cfg.key || !token) return Promise.resolve(false);
+    var url = String(cfg.url).replace(/\/+$/, "");
+    var h = { apikey: cfg.key, Authorization: "Bearer " + token };
+    return Promise.all([
+      fetch(url + "/rest/v1/tariffs?select=kind,tariff,on_time,late_week,late_more", { headers: h }),
+      fetch(url + "/rest/v1/tariff_scale?select=tariff,lo,points", { headers: h })
+    ]).then(function (rr) {
+      if (!rr[0].ok || !rr[1].ok) return false;
+      return Promise.all([rr[0].json(), rr[1].json()]).then(function (dd) {
+        load(dd[0], dd[1]);
+        return true;
+      });
+    }).then(null, function () { return false; });
+  }
+
+  root.BALLY = {
+    load: load,
+    fetchTariffs: fetchTariffs,
+    fromBase: fromBase,
+    kindTariff: kindTariff,
+    late: late,
+    count: count,
+    plural: plural
+  };
+})(window);
+
+</script>
+<script>
 (function () {
   "use strict";
 
@@ -480,7 +738,18 @@
      и переезжает вместе с ним. */
   var PE = window.PlanEdits || null;
   var EDITS = { days: {}, titles: {}, added: {}, deleted: {} }, EFF = BASE, editsJson = "";
-  function rebuild() { EFF = PE ? PE.effective(DATA.days, BASE, EDITS) : BASE; }
+  /* Плановый день урока — обратная раскладка EFF. Нужна приёмке: именно
+     от этой даты считается «в срок или с задержкой», и записывается она
+     в строку приёмки в момент отправки, чтобы поздний перенос урока
+     задним числом не менял уже начисленные баллы. */
+  var PLANDAY = {};
+  function rebuild() {
+    EFF = PE ? PE.effective(DATA.days, BASE, EDITS) : BASE;
+    PLANDAY = {};
+    DATA.days.forEach(function (d) {
+      (EFF[d] || []).forEach(function (id) { if (!PLANDAY[id]) PLANDAY[id] = d; });
+    });
+  }
   rebuild();
 
   function lessonOf(id) {
@@ -540,6 +809,67 @@
     return v || today;
   }
 
+  /* ── Подробности приёмки: таблица lesson_marks (этап 3) ──
+     Ленту трекер по-прежнему рисует по marks — пока идёт первая неделя,
+     откат к прежней странице должен оставаться возможным, а она знает
+     только старый формат. Здесь лежит то, чего в marks нет и не могло быть:
+     вид урока и плановая дата на момент отправки, число доработок,
+     замечание родителя и начисленные баллы. Поэтому каждое действие
+     записывается в оба места сразу.
+
+     Если таблицы в базе ещё нет, всё это молча пропускается: трекер
+     работает ровно как до этапа 3. */
+  var LM = {}, tariffsAsked = false;
+
+  function lmOf(id) { return LM[id] || null; }
+  function lmStatus(id) { var r = LM[id]; return r ? r.status : ""; }
+  function lmUrl(q) { return sb.url + "/rest/v1/lesson_marks" + (q || ""); }
+  function kindOf(id) { var L = lessonOf(id); return L ? (L.k || null) : null; }
+
+  /* Вставка со слиянием: ключ таблицы — ученик и урок, поэтому повторная
+     отправка того же урока не плодит строк, а правит имеющуюся. Поля,
+     которых нет в patch, база не трогает. */
+  function lmSave(id, patch) {
+    if (!sb) return;
+    var body = { student: sid, lesson_id: id };
+    Object.keys(patch).forEach(function (k) { body[k] = patch[k]; });
+    tokenReady().then(function (t) {
+      if (!t) return null;
+      return fetch(lmUrl(), {
+        method: "POST",
+        headers: sbHeaders(t, { "Content-Type": "application/json",
+          "Prefer": "resolution=merge-duplicates,return=representation" }),
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      }).then(function (rows) {
+        if (rows && rows[0]) { LM[id] = rows[0]; render(); }
+      });
+    }).catch(function () { toast("Приёмка не записалась — проверьте связь"); });
+  }
+
+  function lmDrop(id) {
+    delete LM[id];
+    if (!sb) return;
+    tokenReady().then(function (t) {
+      if (!t) return null;
+      return fetch(lmUrl("?student=eq." + encodeURIComponent(sid) + "&lesson_id=eq." + encodeURIComponent(id)),
+        { method: "DELETE", headers: sbHeaders(t, { "Prefer": "return=minimal" }) });
+    }).catch(function () {});
+  }
+
+  function lmPull(t) {
+    return fetch(lmUrl("?student=eq." + encodeURIComponent(sid) + "&select=*"), { headers: sbHeaders(t, null) })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (rows) {
+        var m = {};
+        (rows || []).forEach(function (r) { m[r.lesson_id] = r; });
+        if (JSON.stringify(m) !== JSON.stringify(LM)) { LM = m; render(); }
+      })
+      .catch(function () {});
+  }
+
   /* Окно подтверждения. Диалог один на все действия: подставляем заголовок,
      название урока, пояснение и подпись кнопки. Согласие приходит событием
      close с returnValue "ok" — его даёт кнопка value="ok". Если у браузера
@@ -590,17 +920,21 @@
 
     if (parentMode) {
       if (st === "done") {
-        ask({ title: "Вернуть урок на проверку?", lesson: label,
-              text: "Подтверждение будет снято, и урок снова попадёт в список ожидающих проверки.",
-              go: "Вернуть" },
-            apply(function () { marks[id] = "check:" + today; toast("Урок возвращён на проверку"); }));
+        ask({ title: "Отменить приёмку?", lesson: label,
+              text: "Подтверждение и начисленные баллы будут сняты, урок снова попадёт в список ожидающих проверки.",
+              go: "Отменить приёмку" },
+            apply(function () {
+              /* Дата отправки восстанавливается из приёмки: иначе урок,
+                 принятый неделю назад, выглядел бы отправленным сегодня,
+                 и при повторной приёмке посчитался бы как сданный в срок. */
+              var r = lmOf(id), back = (r && r.sent_on) ? r.sent_on : sentOn(id);
+              marks[id] = "check:" + back;
+              lmSave(id, { status: "sent", accepted_on: null, points: null,
+                           score: null, score_max: null, grade: null });
+              toast("Приёмка отменена");
+            }));
       } else {
-        ask({ title: "Подтвердить выполнение урока?", lesson: label,
-              text: st === "check"
-                ? "Урок будет отмечен как проверенный и уйдёт из списка на проверке."
-                : "Урок будет сразу отмечен как выполненный и подтверждённый.",
-              go: "Подтвердить" },
-            apply(function () { marks[id] = sentOn(id); toast("Выполнение подтверждено"); }));
+        acOpen(id);
       }
       return;
     }
@@ -612,13 +946,170 @@
       ask({ title: "Снять отметку?", lesson: label,
             text: "Урок снова станет невыполненным и исчезнет из списка на проверке.",
             go: "Снять" },
-          apply(function () { delete marks[id]; toast("Отметка снята"); }));
+          apply(function () { delete marks[id]; lmDrop(id); toast("Отметка снята"); }));
     } else {
       ask({ title: "Отправить урок на проверку?", lesson: label,
             text: "Урок будет отмечен как выполненный, родитель увидит его в списке на проверку.",
             go: "Отправить" },
-          apply(function () { marks[id] = "check:" + today; toast("Урок отправлен на проверку"); }));
+          apply(function () {
+            marks[id] = "check:" + today;
+            /* Вид урока и плановый день записываем сейчас: позже расписание
+               может измениться, а цена урока должна остаться той, какой была
+               в день сдачи. Саму дату отправки ставит база, не страница. */
+            lmSave(id, { status: "sent", kind: kindOf(id), plan_on: PLANDAY[id] || null,
+                         sent_on: today, accepted_on: null, points: null });
+            toast("Урок отправлен на проверку");
+          }));
     }
+  }
+
+  /* ── Приёмка урока (этап 3) ──
+     Родитель видит, когда ученик отправил работу, в срок она или с задержкой
+     и сколько полагается по тарифу. Дальше — четыре исхода пункта 2 ТЗ:
+     принять как есть, принять со сниженным баллом, принять без баллов,
+     вернуть на доработку с замечанием.
+
+     Начисленное сохраняется в lesson_marks, но в журнал баллов пока не идёт
+     и детям не показывается: журнал — этап 4. До него число видит только
+     родитель, и это заодно проверка расчёта на живых уроках. */
+  var acDlg = document.getElementById("acDlg");
+  var acId = null, acGrade = null, acAuto = 0;
+  function acEl(n) { return document.getElementById(n); }
+  function acNum(n) { var v = acEl(n).value; return v === "" ? null : Math.round(Number(v)); }
+
+  /* Дата отправки на проверку. У отправленного урока она лежит в отметке,
+     у принятого — в строке приёмки. Если родитель отмечает урок, который
+     ученик не отправлял, датой сдачи считается сегодняшний день. */
+  function acSentDate() {
+    if (statusOf(acId) === "check") return sentOn(acId);
+    var r = lmOf(acId);
+    return (r && r.sent_on) ? r.sent_on : today;
+  }
+
+  function acGradeBtns() {
+    Array.prototype.forEach.call(acEl("acGradeRow").querySelectorAll(".gr"), function (b) {
+      var on = acGrade !== null && Number(b.getAttribute("data-g")) === acGrade;
+      b.className = "gr" + (on ? " on" : "");
+    });
+  }
+
+  /* Пересчёт по тарифу. setPoints — подставить ли посчитанное в поле:
+     при открытии окна и при смене результата подставляем, а правку руками
+     не затираем. */
+  function acShow(setPoints) {
+    var L = lessonOf(acId) || {};
+    var r = window.BALLY.count({
+      kind: L.k, planOn: PLANDAY[acId] || null, sentOn: acSentDate(),
+      score: acEl("acScore").value, scoreMax: acEl("acMax").value, grade: acGrade
+    });
+    acAuto = r.points;
+    if (setPoints) acEl("acPoints").value = r.need ? "" : r.points;
+    acEl("acWhy").textContent = r.need
+      ? r.text
+      : r.text + " → по тарифу " + r.points + " "
+        + window.BALLY.plural(r.points, "балл", "балла", "баллов");
+  }
+
+  function acOpen(id) {
+    /* Без общего расчёта приёмку открывать нечем — возвращаемся к простому
+       подтверждению, как было до этапа 3. Лучше отметить урок без баллов,
+       чем не отметить вовсе. */
+    if (!window.BALLY) {
+      ask({ title: "Подтвердить выполнение урока?", lesson: lessonLabel(id),
+            text: "Расчёт баллов не загрузился, урок будет просто отмечен выполненным.",
+            go: "Подтвердить" },
+          function () { marks[id] = sentOn(id); save(); render(); toast("Выполнение подтверждено"); });
+      return;
+    }
+    acId = id;
+    var r = lmOf(id), L = lessonOf(id) || {};
+    var grp = window.BALLY.kindTariff(L.k).tariff;
+    acGrade = (r && r.grade != null) ? Number(r.grade) : null;
+
+    acEl("acLesson").textContent = lessonLabel(id);
+    acEl("acScoreRow").hidden = grp !== "тест";
+    acEl("acGradeRow").hidden = grp !== "аттестация";
+    acEl("acScore").value = (r && r.score != null) ? r.score : "";
+    acEl("acMax").value = (r && r.score_max != null) ? r.score_max : (grp === "тест" ? 24 : "");
+    acEl("acNote").value = (r && r.note) ? r.note : "";
+    acGradeBtns();
+
+    var plan = PLANDAY[id] || null, sent = acSentDate(), l = window.BALLY.late(plan, sent);
+    var w = acEl("acWhen");
+    w.textContent = "вид: " + (L.k || "не указан")
+      + " · по плану " + (plan ? shortHuman(plan) : "без даты")
+      + " · отправлен " + shortHuman(sent) + " · ";
+    var b = document.createElement("b");
+    b.textContent = l.bucket === "срок" ? "в срок" : l.text;
+    if (l.bucket === "срок") b.style.color = "var(--green)";
+    w.appendChild(b);
+    if (r && r.rework_count) {
+      var rc = document.createElement("span");
+      rc.textContent = " · доработок: " + r.rework_count;
+      w.appendChild(rc);
+    }
+
+    acShow(true);
+    if (acDlg && acDlg.showModal) acDlg.showModal(); else acAccept();
+  }
+
+  function acAccept() {
+    var id = acId;
+    if (!id) return;
+    var v = acEl("acPoints").value;
+    var pts = (v === "") ? acAuto : Math.max(0, Math.round(Number(v) || 0));
+    var note = acEl("acNote").value.trim();
+    var sent = acSentDate();
+    marks[id] = sent;
+    lmSave(id, {
+      status: "accepted", kind: kindOf(id), plan_on: PLANDAY[id] || null,
+      sent_on: sent, accepted_on: today, points: pts, currency: "study",
+      score: acNum("acScore"), score_max: acNum("acMax"), grade: acGrade,
+      note: note || null
+    });
+    save(); render();
+    toast("Принято · " + pts + " " + window.BALLY.plural(pts, "балл", "балла", "баллов"));
+  }
+
+  /* Возврат на доработку. Урок снова становится невыполненным — так он
+     вернётся в список дел ребёнка, а не потеряется в «проверенных».
+     Дата отправки обнуляется: новая отправка даст новую дату, и тариф
+     посчитается уже по ней, как требует пункт 3 ТЗ. */
+  function acSendBack() {
+    var id = acId;
+    if (!id) return false;
+    var note = acEl("acNote").value.trim();
+    if (!note) { toast("Напишите, что переделать"); return false; }
+    var r = lmOf(id);
+    delete marks[id];
+    lmSave(id, {
+      status: "rework", kind: kindOf(id), plan_on: PLANDAY[id] || null,
+      sent_on: null, accepted_on: null, points: null,
+      score: null, score_max: null, grade: null,
+      rework_count: ((r && r.rework_count) || 0) + 1, note: note
+    });
+    save(); render();
+    toast("Отправлено на доработку");
+    return true;
+  }
+
+  if (acDlg) {
+    acEl("acCancel").addEventListener("click", function () { acDlg.close(""); });
+    acEl("acZero").addEventListener("click", function () { acEl("acPoints").value = 0; });
+    acEl("acAuto").addEventListener("click", function () { acShow(true); });
+    acEl("acScore").addEventListener("input", function () { acShow(true); });
+    acEl("acMax").addEventListener("input", function () { acShow(true); });
+    Array.prototype.forEach.call(acEl("acGradeRow").querySelectorAll(".gr"), function (btn) {
+      btn.addEventListener("click", function () {
+        acGrade = Number(btn.getAttribute("data-g"));
+        acGradeBtns(); acShow(true);
+      });
+    });
+    acEl("acRework").addEventListener("click", function () { if (acSendBack()) acDlg.close(""); });
+    acDlg.addEventListener("close", function () {
+      if (acDlg.returnValue === "ok") acAccept();
+      acId = null;
+    });
   }
 
   /* ── Хранилище ──
@@ -693,9 +1184,15 @@
     if (!force && Date.now() - lastSaveAt < 4000) return;
     tokenReady().then(function (t) {
       if (!t) {
-        if (Object.keys(marks).length) { marks = {}; render(); }
+        if (Object.keys(marks).length || Object.keys(LM).length) { marks = {}; LM = {}; render(); }
         setSync("off", "войдите, чтобы увидеть свои отметки");
         return;
+      }
+      /* Тарифы спрашиваем один раз за сеанс: они меняются раз в месяц,
+         а до ответа работают запасные значения из bally.js. */
+      if (!tariffsAsked && window.BALLY) {
+        tariffsAsked = true;
+        window.BALLY.fetchTariffs(CFG, t).then(function (ok) { if (ok) render(); });
       }
       return fetch(sbRow() + "&select=marks", { headers: sbHeaders(t, null) })
         .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -704,7 +1201,8 @@
           var remote = rows[0].marks || {};
           if (JSON.stringify(remote) !== JSON.stringify(marks)) { marks = remote; render(); }
           setSync("on", "синхронизируется между устройствами");
-        });
+        })
+        .then(function () { return lmPull(t); });
     }).catch(function () { setSync("off", "нет связи с базой"); });
   }
 
@@ -725,7 +1223,7 @@
     if (poll) { clearInterval(poll); poll = null; }
     if (sb) {
       setSync("", "загружаю…");
-      marks = {};
+      marks = {}; LM = {};
       pull(true);
       pullEdits();
       poll = setInterval(function () { if (!document.hidden) { pull(false); pullEdits(); } }, 12000);
@@ -766,10 +1264,14 @@
     var lesson = lessonOf(id);
     if (!lesson) return null;
     var s = lesson.s, st = statusOf(id), done = st !== "";
+    /* Возвращённый на доработку урок снова считается невыполненным — иначе
+       он исчез бы из списка дел. Отличает его метка и замечание родителя. */
+    var rew = !done && lmStatus(id) === "rework";
     var el = document.createElement("div");
     /* уроки аттестации ЕдПалм выделяются рамкой и меткой */
     el.className = "card " + s + (opts.debt && !done ? " debt" : "")
       + (st === "done" ? " done" : "") + (st === "check" ? " check" : "")
+      + (rew ? " rew" : "")
       + (lesson.k === "аттестация" ? " att" : "");
     el.setAttribute("role", "button");
     el.setAttribute("tabindex", "0");
@@ -784,6 +1286,16 @@
     var tp = document.createElement("div"); tp.className = "tp"; tp.textContent = lesson.t;
     mid.appendChild(sj); mid.appendChild(tp);
     if (lesson.k) { var kd = document.createElement("div"); kd.className = "kd"; kd.textContent = lesson.k; mid.appendChild(kd); }
+
+    /* Замечание родителя к доработке — ради него этап 3 и виден детям */
+    if (rew) {
+      var rm = lmOf(id);
+      if (rm && rm.note) {
+        var nt = document.createElement("div");
+        nt.className = "note-rew"; nt.textContent = "Переделать: " + rm.note;
+        mid.appendChild(nt);
+      }
+    }
 
     /* Ссылки на видеоурок InternetUrok и на платформу аттестации ЕдПалм —
        тап по ним не отмечает урок */
@@ -877,6 +1389,21 @@
       stc.className = "chip " + (st === "done" ? "ok" : "ck");
       stc.textContent = st === "done" ? "выполнен" : "на проверке";
       rgt.appendChild(stc);
+    }
+    if (rew) {
+      var rwc = document.createElement("span");
+      rwc.className = "chip rw"; rwc.textContent = "на доработку";
+      rgt.appendChild(rwc);
+    }
+    /* Баллы до этапа 4 видит только родитель: журнала ещё нет, показывать
+       детям число, которое никуда не идёт, — обещать то, чего нет. */
+    if (parentMode && st === "done") {
+      var pr = lmOf(id);
+      if (pr && pr.points != null) {
+        var pc = document.createElement("span");
+        pc.className = "chip pts"; pc.textContent = pr.points + " б";
+        rgt.appendChild(pc);
+      }
     }
     if (opts.time) { var tm = document.createElement("div"); tm.className = "tm"; tm.textContent = opts.time; rgt.appendChild(tm); }
     if (opts.debtDate) { var ch = document.createElement("span"); ch.className = "chip d"; ch.textContent = shortHuman(opts.debtDate); rgt.appendChild(ch); }
