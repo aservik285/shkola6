@@ -156,6 +156,47 @@
   .ac-dlg .why{font-size:13.5px;font-weight:600;color:var(--ink)}
   .ac-dlg .when b{color:var(--red)}
   .ac-dlg .acts{flex-wrap:wrap}
+  /* ── Панель баллов (этап 4) ──
+     Строка под шапкой: сколько заработано, сколько долгов, и у родителя —
+     сколько дней ждёт начисления. Цифры кликабельны: открывают журнал. */
+  .wallet{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
+  .wallet button,.wallet .w-bal{display:flex;flex-direction:column;gap:2px;align-items:flex-start;
+    flex:1 1 92px;min-height:52px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;
+    background:var(--sheet);color:var(--ink);font:inherit;text-align:left}
+  .wallet button{cursor:pointer}
+  .wallet .w-lab{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .wallet b{font-size:19px;line-height:1.1;font-variant-numeric:tabular-nums}
+  .wallet .w-debt b{color:var(--red)}
+  .wallet .w-zero b{color:var(--muted)}
+  .wallet .w-todo{background:var(--green-soft);border-color:var(--green)}
+  .wallet .w-todo b{color:var(--green)}
+  body.need-login .wallet{display:none}
+
+  /* окно журнала: история начислений, очередь дней и ручная запись */
+  .lg-dlg{max-width:min(520px,calc(100vw - 32px))}
+  .lg-dlg .lg-sum{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+  .lg-dlg .lg-sum b{color:var(--ink);font-size:15px}
+  .lg-dlg .lg-list{display:flex;flex-direction:column;gap:6px;max-height:46vh;overflow:auto;
+    border:1px solid var(--line);border-radius:8px;padding:8px}
+  .lg-dlg .lg-row{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35}
+  .lg-dlg .lg-row .lg-d{color:var(--muted);white-space:nowrap;font-size:11.5px;padding-top:2px;min-width:52px}
+  .lg-dlg .lg-row .lg-r{flex:1}
+  .lg-dlg .lg-row .lg-n{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .lg-dlg .lg-row .lg-n.plus{color:var(--green)}
+  .lg-dlg .lg-row .lg-n.minus{color:var(--red)}
+  .lg-dlg .lg-row.undone .lg-r{text-decoration:line-through;color:var(--muted)}
+  .lg-dlg .lg-undo{font:600 11px/1 inherit;padding:5px 7px;min-height:0;border-radius:6px}
+  .lg-dlg .lg-todo{display:flex;flex-direction:column;gap:6px;border:1px solid var(--green);
+    background:var(--green-soft);border-radius:8px;padding:8px}
+  .lg-dlg .lg-todo .lg-row{align-items:center}
+  .lg-dlg .lg-pay{font:600 12px/1 inherit;padding:7px 10px;min-height:0;border-radius:6px;
+    background:var(--green);border-color:var(--green);color:#fff}
+  .lg-dlg .lg-hand{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;
+    border-top:1px solid var(--line);padding-top:10px}
+  .lg-dlg .lg-hand input[type="number"]{width:88px}
+  .lg-dlg .lg-hand input[type="text"]{flex:1;min-width:150px}
+  .lg-dlg .empty{font-size:13px;color:var(--muted);padding:6px 2px}
+
   /* всплывающая подсказка */
   .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;
     background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:10px 14px;border-radius:8px;
@@ -309,6 +350,38 @@
     </form>
   </dialog>
 
+  <!-- Журнал баллов. Ребёнку — только история: за что начислено и за что снято.
+       Родителю дополнительно две вещи: очередь дней и недель, закрытых без долгов,
+       и ручная запись — разовое поощрение или штраф с обязательной причиной.
+       Отменяется любая запись: в журнал идёт встречная, история не переписывается. -->
+  <dialog id="lgDlg" class="pm-dlg lg-dlg">
+    <form id="lgForm" method="dialog">
+      <h3>Журнал баллов</h3>
+      <p class="lg-sum">
+        <span>за учёбу <b id="lgStudy">0</b></span>
+        <span>за задания <b id="lgTask">0</b></span>
+        <span id="lgWho"></span>
+      </p>
+
+      <div class="lg-todo" id="lgTodo" hidden>
+        <p>Закрыто без долгов — начислить?</p>
+        <div id="lgTodoList"></div>
+      </div>
+
+      <div class="lg-list" id="lgList"></div>
+
+      <div class="lg-hand" id="lgHand" hidden>
+        <label>Баллов <input type="number" id="lgDelta" step="5" inputmode="numeric" placeholder="−50"></label>
+        <input type="text" id="lgReason" maxlength="120" placeholder="Причина — её увидит ребёнок">
+        <button type="button" id="lgAdd">Записать</button>
+      </div>
+
+      <div class="acts">
+        <button type="submit" id="lgClose">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Пока не вошли, база отметок недоступна, и показывать «долги» нельзя:
        пустые отметки выглядят как полный провал по всем предметам. -->
   <div class="needlogin" id="needLogin" hidden>
@@ -323,6 +396,23 @@
     <span class="wk" id="weekMeta"></span>
   </div>
   <div class="prog"><i id="progBar"></i></div>
+
+  <!-- Баллы. Пока не вошли, прячется вместе с остальным: без отметок
+       показывать баланс нечему. -->
+  <div class="wallet" id="wallet" hidden>
+    <button type="button" id="walStudyBtn">
+      <span class="w-lab">Баллы за учёбу</span><b id="walStudy">0</b>
+    </button>
+    <button type="button" id="walTaskBtn">
+      <span class="w-lab">За задания</span><b id="walTask">0</b>
+    </button>
+    <div class="w-bal w-debt">
+      <span class="w-lab">Долги</span><b id="walDebt">0</b>
+    </div>
+    <button type="button" class="w-todo" id="walTodo" hidden>
+      <span class="w-lab">Ждёт начисления</span><b id="walTodoN">0</b>
+    </button>
+  </div>
 
   <div class="summary">
     <h2>Отставание по предметам</h2>
@@ -523,7 +613,13 @@
     "резерв":              { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
     "Go Getter 1":         { tariff: "теория",     on_time: 50,  late_week: 25, late_more: 0 },
     "тест":                { tariff: "тест",       on_time: null, late_week: null, late_more: null },
-    "аттестация":          { tariff: "аттестация", on_time: null, late_week: null, late_more: null }
+    "аттестация":          { tariff: "аттестация", on_time: null, late_week: null, late_more: null },
+    /* Не виды уроков, а надбавки за закрытый день и закрытую неделю.
+       Живут в той же таблице по той же причине: родитель меняет суммы
+       без пересборки страниц. На расчёт уроков не влияют — такого вида
+       в ленте нет, и kindTariff до них не доберётся. */
+    "день без долгов":     { tariff: "бонус",      on_time: 100, late_week: null, late_more: null },
+    "неделя без долгов":   { tariff: "бонус",      on_time: 500, late_week: null, late_more: null }
   };
 
   /* Шкалы: lo — нижняя граница, с которой действует строка. Для теста это
@@ -570,6 +666,16 @@
   function kindTariff(kind) {
     var all = tariffs();
     return all[kind] || ZAPAS[kind] || all["теория"] || ZAPAS["теория"];
+  }
+
+  /* Надбавка за день или неделю, закрытые без долгов. name — "день" либо
+     "неделя". Начисляет её родитель вручную: ТЗ требует, чтобы решение
+     принимал человек, а не расписание. */
+  function bonus(name) {
+    var kind = name + " без долгов";
+    var r = tariffs()[kind] || ZAPAS[kind];
+    if (r && r.on_time !== null && r.on_time !== undefined) return r.on_time;
+    return name === "неделя" ? 500 : 100;
   }
 
   function dayNum(d) {
@@ -652,6 +758,60 @@
     return res;
   }
 
+  /* Дни и недели, закрытые без долгов и ещё не оплаченные.
+
+     Считается на лету, а не хранится задачами: закрыт ли день, видно
+     из плана, а оплачен ли — из журнала. Третья копия этих сведений
+     устаревала бы при каждом переносе урока.
+
+       o.days    все даты по порядку, "2026-11-24"
+       o.lessons функция(дата) -> массив уроков этого дня
+       o.ok      функция(урок) -> принят ли он родителем
+       o.weekOf  функция(дата) -> номер недели
+       o.start   первая оплачиваемая дата: раньше неё баллов нет
+       o.today   сегодня; этот день и будущие ещё не закрыты
+       o.paid    уже оплаченное, ключи вида "день|2026-11-24"
+
+     Возвращает [{ kind: "день"|"неделя", id: дата, first, last }].
+     Сумму ставит вызывающий — она берётся из bonus().
+
+     Три правила, каждое с ценой ошибки:
+     день без уроков (выходной, каникулы) не оплачивается — иначе система
+     платит за то, что ничего не задано; неделя считается закрытой только
+     после своего последнего учебного дня; у недели ключ — её первый день,
+     потому что номер недели зависит от раскладки, а дата нет. */
+  function closed(o) {
+    var out = [], W = {};
+    var days = o.days || [], paid = o.paid || {};
+
+    days.forEach(function (d) {
+      var ids = o.lessons(d) || [];
+      var w = o.weekOf(d);
+      if (w !== null && w !== undefined) {
+        if (!W[w]) W[w] = { first: d, last: d, has: false, ok: true };
+        W[w].last = d;
+      }
+      var all = ids.length > 0;
+      ids.forEach(function (id) {
+        if (W[w]) W[w].has = true;
+        if (!o.ok(id)) { all = false; if (W[w]) W[w].ok = false; }
+      });
+      if (!all || d < o.start || d >= o.today) return;
+      if (paid["день|" + d]) return;
+      out.push({ kind: "день", id: d, first: d, last: d });
+    });
+
+    Object.keys(W).forEach(function (w) {
+      var x = W[w];
+      if (!x.has || !x.ok || x.first < o.start || x.last >= o.today) return;
+      if (paid["неделя|" + x.first]) return;
+      out.push({ kind: "неделя", id: x.first,
+                 first: x.first, last: x.last, week: Number(w) });
+    });
+
+    return out;
+  }
+
   /* Тарифы из базы. Читают их все вошедшие, поэтому отдельного права
      не нужно — хватает токена сессии. Молчание базы не ошибка:
      остаются запасные значения.
@@ -682,6 +842,8 @@
     fetchTariffs: fetchTariffs,
     fromBase: fromBase,
     kindTariff: kindTariff,
+    bonus: bonus,
+    closed: closed,
     late: late,
     count: count,
     plural: plural
@@ -1112,6 +1274,240 @@
     });
   }
 
+  /* ── Журнал баллов (этап 4) ──
+     Баланс нигде не хранится числом: он складывается из записей журнала.
+     Поле «остаток» рано или поздно разъезжается с историей, сумма записей
+     разъехаться не может.
+
+     Начисление за урок делает сама база: страница ставит баллы в приёмке,
+     триггер пишет строку журнала. Здесь остаётся то, чего из приёмки
+     не вывести: надбавки за день и неделю без долгов, разовые поощрения
+     и штрафы.
+
+     Если журнала в базе ещё нет, всё молча выключается и трекер работает
+     как на этапе 3. */
+
+  /* Первый день, за который идут баллы. Решение ТЗ: задним числом
+     не начисляем, стартовый баланс у обоих ноль. Дни раньше этой даты
+     в очередь начислений не попадают, сколько бы уроков в них ни закрыли. */
+  var LED_START = "2026-11-24";
+
+  var LED = [], BAL = { study: 0, task: 0 }, PAID = {}, LEDOK = false, ledJson = "";
+
+  function ledUrl(q) { return sb.url + "/rest/v1/ledger" + (q || ""); }
+  function ledWho() { return "?student=eq." + encodeURIComponent(sid); }
+  function bonusOf(name) { return window.BALLY ? window.BALLY.bonus(name) : (name === "неделя" ? 500 : 100); }
+
+  /* Три запроса за раз: баланс (сумма по всему журналу), последние записи
+     для показа и список уже оплаченных дней и недель. Последний нужен
+     отдельно: показываем мы шестьдесят записей, а начисления за дни могут
+     уйти далеко за этот предел, и очередь начала бы предлагать оплаченное. */
+  function ledPull(t) {
+    var h = sbHeaders(t, null), who = ledWho();
+    var tipy = "&source_type=in.(" + encodeURIComponent("день") + "," + encodeURIComponent("неделя") + ")";
+    return Promise.all([
+      fetch(sb.url + "/rest/v1/balances" + who + "&select=currency,balance", { headers: h }),
+      fetch(ledUrl(who + "&select=*&order=id.desc&limit=60"), { headers: h }),
+      fetch(ledUrl(who + "&select=source_type,source_id&delta=gt.0" + tipy), { headers: h })
+    ]).then(function (rr) {
+      if (!rr[0].ok || !rr[1].ok || !rr[2].ok) throw new Error("журнала нет");
+      return Promise.all([rr[0].json(), rr[1].json(), rr[2].json()]);
+    }).then(function (dd) {
+      var b = { study: 0, task: 0 };
+      (dd[0] || []).forEach(function (r) { b[r.currency] = r.balance; });
+      var p = {};
+      (dd[2] || []).forEach(function (r) { p[r.source_type + "|" + r.source_id] = true; });
+      var j = JSON.stringify([b, dd[1], p]);
+      LEDOK = true;
+      if (j === ledJson) return;
+      ledJson = j; BAL = b; LED = dd[1] || []; PAID = p;
+      render();
+    }).catch(function () {
+      if (LEDOK) { LEDOK = false; render(); }
+    });
+  }
+
+  /* Запись в журнал. Политика базы разрешает её только родителю, поэтому
+     отдельной проверки на странице не нужно — но кнопки мы всё равно
+     показываем ему одному, чтобы ребёнок не упирался в отказ. */
+  function ledPost(rows, okText) {
+    if (!sb) return;
+    tokenReady().then(function (t) {
+      if (!t) { toast("Войдите, чтобы начислять баллы"); return null; }
+      return fetch(ledUrl(), {
+        method: "POST",
+        headers: sbHeaders(t, { "Content-Type": "application/json", "Prefer": "return=minimal" }),
+        body: JSON.stringify(rows)
+      }).then(function (r) {
+        /* 409 — сработала защита от второго начисления за тот же день.
+           Это не поломка, а именно то, ради чего она поставлена. */
+        if (r.status === 409) { toast("За это уже начислено"); return null; }
+        if (!r.ok) throw new Error(r.status);
+        if (okText) toast(okText);
+        ledJson = "";
+        return tokenReady().then(function (t2) { return t2 ? ledPull(t2) : null; });
+      });
+    }).catch(function () { toast("Запись не прошла — проверьте связь"); });
+  }
+
+  /* Очередь начислений: дни и недели, закрытые без долгов. Сам отбор живёт
+     в bally.js — там он покрыт проверками и оттуда же им воспользуется
+     магазин. Здесь остаётся подстановка сумм и человеческих подписей. */
+  function payQueue() {
+    if (!parentMode || !window.BALLY || !window.BALLY.closed) return [];
+    var rows = window.BALLY.closed({
+      days: DATA.days,
+      lessons: function (d) { return EFF[d] || []; },
+      ok: isConfirmed,
+      weekOf: function (d) { return WEEKOF[d]; },
+      start: LED_START,
+      today: realToday(),
+      paid: PAID
+    });
+    return rows.map(function (r) {
+      var label = r.kind === "неделя"
+        ? "неделя " + (r.week + 1) + " · " + shortHuman(r.first) + " — " + shortHuman(r.last)
+        : shortHuman(r.id);
+      return { kind: r.kind, id: r.id, points: bonusOf(r.kind), label: label };
+    });
+  }
+
+  /* ── Панель под шапкой ── */
+  function walRender(debtCount) {
+    var box = document.getElementById("wallet");
+    if (!box) return;
+    var on = LEDOK && !!(SESS && SESS.token);
+    box.hidden = !on;
+    if (!on) return;
+
+    var st = document.getElementById("walStudy"), tk = document.getElementById("walTask");
+    st.textContent = BAL.study;
+    tk.textContent = BAL.task;
+    st.parentNode.className = BAL.study ? "" : "w-zero";
+    tk.parentNode.className = BAL.task ? "" : "w-zero";
+    document.getElementById("walDebt").textContent = debtCount;
+
+    var todo = payQueue(), tb = document.getElementById("walTodo");
+    tb.hidden = !todo.length;
+    document.getElementById("walTodoN").textContent = todo.length;
+  }
+
+  /* ── Окно журнала ── */
+  var lgDlg = document.getElementById("lgDlg");
+  function lgEl(n) { return document.getElementById(n); }
+
+  function ledDate(s) {
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return "";
+    return d.getDate() + " " + MONTHS[d.getMonth()].slice(0, 3);
+  }
+
+  function lgRender() {
+    if (!lgDlg) return;
+    lgEl("lgStudy").textContent = BAL.study;
+    lgEl("lgTask").textContent = BAL.task;
+    var who = STUDENTS.filter(function (s) { return s.id === sid; })[0];
+    lgEl("lgWho").textContent = who ? who.name : "";
+
+    /* Очередь начислений — только родителю. */
+    var todo = payQueue(), tdBox = lgEl("lgTodo"), tdList = lgEl("lgTodoList");
+    tdBox.hidden = !todo.length;
+    tdList.innerHTML = "";
+    todo.forEach(function (t) {
+      var row = document.createElement("div");
+      row.className = "lg-row";
+      var r = document.createElement("span");
+      r.className = "lg-r";
+      r.textContent = t.label + " — " + t.kind + " без долгов";
+      var btn = document.createElement("button");
+      btn.type = "button"; btn.className = "lg-pay";
+      btn.textContent = "+" + t.points;
+      btn.addEventListener("click", function () {
+        ledPost([{ student: sid, currency: "study", delta: t.points,
+                   reason: t.kind + " без долгов: " + t.label,
+                   source_type: t.kind, source_id: t.id }],
+                "Начислено " + t.points);
+        lgDlg.close("");
+      });
+      row.appendChild(r); row.appendChild(btn);
+      tdList.appendChild(row);
+    });
+
+    /* История. Отменённые записи зачёркнуты: видно и начисление, и его отмену. */
+    var list = lgEl("lgList");
+    list.innerHTML = "";
+    var undone = {};
+    LED.forEach(function (r) { if (r.reverts_id) undone[r.reverts_id] = true; });
+
+    if (!LED.length) {
+      list.innerHTML = '<div class="empty">Пока ничего не начислено. Баллы идут с ' +
+        human(LED_START) + '.</div>';
+    }
+    LED.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "lg-row" + (undone[r.id] ? " undone" : "");
+
+      var d = document.createElement("span");
+      d.className = "lg-d"; d.textContent = ledDate(r.created_at);
+
+      var txt = document.createElement("span");
+      txt.className = "lg-r"; txt.textContent = r.reason;
+
+      var n = document.createElement("span");
+      n.className = "lg-n " + (r.delta < 0 ? "minus" : "plus");
+      n.textContent = (r.delta > 0 ? "+" : "") + r.delta;
+
+      row.appendChild(d); row.appendChild(txt); row.appendChild(n);
+
+      /* Начисление за урок отменяется не здесь, а в самой карточке:
+         снять приёмку — и база уберёт баллы сама. Иначе journal и приёмка
+         разошлись бы: урок принят, а баллов нет. */
+      if (parentMode && !undone[r.id] && !r.reverts_id && r.source_type !== "урок") {
+        var u = document.createElement("button");
+        u.type = "button"; u.className = "lg-undo"; u.textContent = "отменить";
+        u.addEventListener("click", function () {
+          ledPost([{ student: r.student, currency: r.currency, delta: -r.delta,
+                     reason: "отмена: " + r.reason,
+                     source_type: r.source_type, source_id: r.source_id,
+                     reverts_id: r.id }], "Отменено");
+          lgDlg.close("");
+        });
+        row.appendChild(u);
+      }
+      list.appendChild(row);
+    });
+
+    lgEl("lgHand").hidden = !parentMode;
+  }
+
+  function lgOpen() {
+    if (!lgDlg || !lgDlg.showModal) { toast("Журнал: " + BAL.study + " за учёбу, " + BAL.task + " за задания"); return; }
+    lgRender();
+    lgDlg.showModal();
+  }
+
+  if (lgDlg) {
+    lgEl("lgAdd").addEventListener("click", function () {
+      var n = Number(lgEl("lgDelta").value);
+      var why = lgEl("lgReason").value.trim();
+      if (!n || isNaN(n)) { toast("Введите число: со знаком минус — штраф"); return; }
+      if (!why) { toast("Нужна причина — её увидит ребёнок"); return; }
+      ledPost([{ student: sid, currency: "study", delta: Math.round(n),
+                 reason: why, source_type: "ручное" }],
+              n < 0 ? "Списано" : "Начислено");
+      lgEl("lgDelta").value = ""; lgEl("lgReason").value = "";
+      lgDlg.close("");
+    });
+  }
+
+  (function () {
+    var s = document.getElementById("walStudyBtn"), t = document.getElementById("walTaskBtn"),
+        q = document.getElementById("walTodo");
+    if (s) s.addEventListener("click", lgOpen);
+    if (t) t.addEventListener("click", lgOpen);
+    if (q) q.addEventListener("click", lgOpen);
+  })();
+
   /* ── Хранилище ──
      Три режима, выбираются сами:
        1. Supabase — если страница собрана с настройками (веб-версия)
@@ -1202,7 +1598,8 @@
           if (JSON.stringify(remote) !== JSON.stringify(marks)) { marks = remote; render(); }
           setSync("on", "синхронизируется между устройствами");
         })
-        .then(function () { return lmPull(t); });
+        .then(function () { return lmPull(t); })
+        .then(function () { return ledPull(t); });
     }).catch(function () { setSync("off", "нет связи с базой"); });
   }
 
@@ -1224,6 +1621,9 @@
     if (sb) {
       setSync("", "загружаю…");
       marks = {}; LM = {};
+      /* Журнал — величина ученика, а не страницы: при смене ленты он должен
+         обнулиться, иначе на чужом балансе мелькнёт предыдущий. */
+      LED = []; BAL = { study: 0, task: 0 }; PAID = {}; ledJson = "";
       pull(true);
       pullEdits();
       poll = setInterval(function () { if (!document.hidden) { pull(false); pullEdits(); } }, 12000);
@@ -1553,6 +1953,10 @@
     if (!shownToday) list.innerHTML = '<div class="empty">На этот день уроков нет</div>';
     document.getElementById("todayMeta").textContent = "выполнено " + doneToday + " из " + shownToday
       + (checkToday ? " · на проверке " + checkToday : "");
+
+    /* Баллы: баланс, долги и — у родителя — сколько дней ждёт начисления.
+       Число долгов берём отсюда же, уже посчитанное. */
+    walRender(debts.length);
 
     /* прогресс: пройдено от запланированного по сегодняшний день включительно */
     document.getElementById("progBar").style.width = planned ? Math.round(done / planned * 100) + "%" : "0";
