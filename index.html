@@ -203,6 +203,15 @@
   .lg-dlg .lg-chip.on{background:var(--pen);border-color:var(--pen);color:#fff}
   .lg-dlg .lg-stat{font-size:11.5px;color:var(--muted);min-height:14px}
   .lg-dlg .lg-more{font:600 12px/1 inherit;padding:9px 10px;min-height:0;width:100%}
+  /* замечание родителя из приёмки — третьей строкой записи */
+  .lg-dlg .lg-row .lg-c{display:block;margin-top:2px;font-size:11.5px;line-height:1.35;
+    color:var(--ink-2);border-left:2px solid var(--line);padding-left:6px}
+  /* правка записи: форма внизу окна переключается в режим правки */
+  .lg-dlg .lg-mode{flex:1 0 100%;display:flex;gap:8px;align-items:center;
+    justify-content:space-between;font-size:12px;color:var(--ink-2);
+    background:var(--pen-soft);border-radius:8px;padding:7px 9px}
+  .lg-dlg .lg-mode b{color:var(--ink)}
+  .lg-dlg .lg-mode button{font:600 11.5px/1 inherit;padding:6px 8px;min-height:0;border-radius:6px}
   .lg-dlg .lg-todo{display:flex;flex-direction:column;gap:6px;border:1px solid var(--green);
     background:var(--green-soft);border-radius:8px;padding:8px}
   .lg-dlg .lg-todo .lg-row{align-items:center}
@@ -296,6 +305,13 @@
   .card.rew{background:#FFF6F6;border-left-color:var(--red)}
   .card.rew .tick{border-color:var(--red);color:var(--red);background:#fff}
   .note-rew{font-size:12.5px;color:var(--ink-2);line-height:1.35;margin-top:3px}
+
+  /* Урок, к которому перешли из журнала: подсветка на пару секунд, иначе
+     в списке дня его приходится искать глазами. */
+  .card.hl{box-shadow:0 0 0 2px var(--pen),var(--shadow)}
+  @keyframes hlFade{0%{box-shadow:0 0 0 3px var(--pen),var(--shadow)}
+    100%{box-shadow:0 0 0 2px var(--pen),var(--shadow)}}
+  .card.hl{animation:hlFade .6s ease-out 2 alternate}
 
   .empty{padding:20px 16px;text-align:center;color:var(--muted);font-size:14px;
     background:var(--sheet);border:1px dashed var(--rule);border-radius:var(--r)}
@@ -437,8 +453,15 @@
 
       <div class="lg-list" id="lgList"></div>
       <button type="button" class="lg-more" id="lgMore" hidden>Показать ещё</button>
+      <!-- Убирает только пары, которые гасят друг друга в ноль: отмену
+           и то, что она отменила. По одной записи удалить нельзя. -->
+      <button type="button" class="lg-more" id="lgUborka" hidden>Убрать погашенные записи</button>
 
       <div class="lg-hand" id="lgHand" hidden>
+        <div class="lg-mode" id="lgMode" hidden>
+          <span id="lgModeTxt"></span>
+          <button type="button" id="lgModeOff">Не править</button>
+        </div>
         <label>Баллов <input type="number" id="lgDelta" step="5" inputmode="numeric" placeholder="−50"></label>
         <input type="text" id="lgReason" maxlength="120" placeholder="Причина — её увидит ребёнок">
         <button type="button" id="lgAdd">Записать</button>
@@ -1098,7 +1121,7 @@
     (rows || []).forEach(function (r) {
       if (!vid(r)) return;
       if (slova.length) {
-        var seno = norm([r.text, r.sub, r.reason, r.date, r.delta].join(" "));
+        var seno = norm([r.text, r.sub, r.reason, r.comment, r.date, r.delta].join(" "));
         for (var i = 0; i < slova.length; i++) {
           if (seno.indexOf(slova[i]) < 0) return;
         }
@@ -1707,6 +1730,75 @@
     }).catch(function () { toast("Запись не прошла — проверьте связь"); });
   }
 
+  /* Правка записи. Решение родителя 18 ноября: править на месте, включая
+     сумму, — «я сам решу, когда править, а когда отменять». Прежнее правило
+     ТЗ «ничего не редактируется» снято сознательно, отмена при этом осталась.
+
+     Что правится, решает база: политика разрешает родителю менять только
+     сумму, причину и замечание, а сумму записи за урок не даёт менять вовсе
+     (у неё своё место — поле баллов в приёмке). Поэтому отказ базы здесь
+     не прячем, а показываем её же словами. */
+  function ledPatch(id, body) {
+    if (!sb) return;
+    tokenReady().then(function (t) {
+      if (!t) { toast("Войдите, чтобы править журнал"); return null; }
+      return fetch(ledUrl("?id=eq." + encodeURIComponent(id)), {
+        method: "PATCH",
+        headers: sbHeaders(t, { "Content-Type": "application/json", "Prefer": "return=minimal" }),
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        if (r.ok) {
+          toast("Запись изменена");
+          ledJson = "";
+          ledFull();
+          return tokenReady().then(function (t2) { return t2 ? ledPull(t2) : null; });
+        }
+        return r.json().then(function (e) {
+          toast((e && e.message) ? e.message : "Правка не прошла");
+        }, function () { toast("Правка не прошла"); });
+      });
+    }).catch(function () { toast("Правка не прошла — проверьте связь"); });
+  }
+
+  /* Уборка погашенных пар. Удаляет не страница, а функция в базе: она
+     проверяет, что пара действительно гасит друг друга в ноль, и только
+     такие записи убирает. Права удалять по одной нет ни у кого из входящих
+     через страницу — ни у ребёнка, ни у родителя. */
+  function ledUborka() {
+    if (!sb || !parentMode) return;
+    tokenReady().then(function (t) {
+      if (!t) { toast("Войдите, чтобы убирать записи"); return null; }
+      return fetch(sb.url + "/rest/v1/rpc/ledger_uborka", {
+        method: "POST",
+        headers: sbHeaders(t, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ p_student: sid })
+      }).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      }).then(function (n) {
+        var k = Number(n) || 0;
+        toast(k ? "Убрано записей: " + k : "Убирать нечего");
+        ledJson = "";
+        ledFull();
+        return tokenReady().then(function (t2) { return t2 ? ledPull(t2) : null; });
+      });
+    }).catch(function () { toast("Не удалось убрать записи"); });
+  }
+
+  /* Сколько записей уйдёт при уборке: отмена и то, что она отменила,
+     если вместе они дают ноль. Считаем на странице, чтобы не показывать
+     кнопку, когда убирать нечего. */
+  function ledPogasheno() {
+    var po = {}, n = 0;
+    LED.forEach(function (r) { po[r.id] = r; });
+    LED.forEach(function (r) {
+      if (!r.reverts_id) return;
+      var i = po[r.reverts_id];
+      if (i && Number(i.delta) === -Number(r.delta)) n += 2;
+    });
+    return n;
+  }
+
   /* Очередь начислений: дни и недели, закрытые без долгов. Сам отбор живёт
      в bally.js — там он покрыт проверками и оттуда же им воспользуется
      магазин. Здесь остаётся подстановка сумм и человеческих подписей. */
@@ -1779,6 +1871,26 @@
      и reverts_id — это отмена, а не штраф» стоит проверять, а не помнить. */
   function ledAct(r) { return window.BALLY.dejstvie(r); }
 
+  /* Показать урок из записи журнала: перейти в его день, прокрутить к нему
+     и подсветить. Без подсветки карточку приходится искать глазами —
+     в дне до восьми уроков, и все похожи. */
+  function pokazatUrok(id) {
+    var d = PLANDAY[id];
+    if (d) setDay(d);
+    setTimeout(function () {
+      var c = document.querySelector('.card[data-id="' + id + '"]');
+      if (!c) { toast("Урок не нашёлся в этом дне"); return; }
+      if (c.scrollIntoView) {
+        try { c.scrollIntoView({ block: "center", behavior: "smooth" }); }
+        catch (e) { c.scrollIntoView(); }
+      }
+      c.className += " hl";
+      setTimeout(function () {
+        c.className = c.className.replace(/\s*\bhl\b/, "");
+      }, 2600);
+    }, 60);
+  }
+
   /* Номер недели и её границы по первому дню — он и есть source_id записи.
      Границы считаем по учебным дням, а не календарным: неделя закрывается
      вместе с воскресеньем, но писать «вс 29 ноя» в подписи незачем —
@@ -1832,14 +1944,37 @@
     return LED.map(function (r) {
       var L = ledText(r);
       return { r: r, text: L.text, sub: L.sub, subj: L.subj, name: L.name,
-               reason: r.reason, delta: r.delta, source_type: r.source_type,
-               reverts_id: r.reverts_id, date: ledDateFull(r.created_at) };
+               reason: r.reason, comment: r.comment, delta: r.delta,
+               source_type: r.source_type, reverts_id: r.reverts_id,
+               date: ledDateFull(r.created_at) };
     });
   }
 
   /* ── Поиск и постраничный показ ── */
   var LG_SHAG = 25;
   var lgKind = "все", lgQuery = "", lgSkolko = LG_SHAG;
+
+  /* Какую запись правим. null — форма внизу окна добавляет новую. */
+  var lgEditId = null;
+
+  function lgPravka(r) {
+    lgEditId = r.id;
+    lgEl("lgDelta").value = r.delta;
+    lgEl("lgReason").value = r.reason || "";
+    lgEl("lgMode").hidden = false;
+    lgEl("lgModeTxt").textContent = "Правим запись от " + ledDate(r.created_at)
+      + " · было " + (r.delta > 0 ? "+" : "−") + Math.abs(r.delta);
+    lgEl("lgAdd").textContent = "Сохранить";
+    lgEl("lgReason").focus();
+  }
+
+  function lgPravkaOff() {
+    lgEditId = null;
+    lgEl("lgDelta").value = "";
+    lgEl("lgReason").value = "";
+    lgEl("lgMode").hidden = true;
+    lgEl("lgAdd").textContent = "Записать";
+  }
 
   /* Тысячи разделяем неразрывным пробелом: «1 750» не должно переноситься
      на две строки в узкой строке итога. */
@@ -1897,6 +2032,7 @@
     var list = lgEl("lgList"), stat = lgEl("lgStat"), more = lgEl("lgMore");
     list.innerHTML = "";
     more.hidden = true;
+    lgEl("lgUborka").hidden = true;
     lgEl("lgHand").hidden = !parentMode;
 
     if (!LED.length) {
@@ -1951,31 +2087,47 @@
       s.className = "lg-s"; s.textContent = q.sub;
       txt.appendChild(t); txt.appendChild(s);
 
+      /* Замечание, написанное родителем при приёмке. Отдельной строкой:
+         причина отвечает «за что начислено», замечание — что сказал
+         родитель, и в одну строку их смешивать неудобно. */
+      if (r.comment) {
+        var c = document.createElement("span");
+        c.className = "lg-c"; c.textContent = r.comment;
+        txt.appendChild(c);
+      }
+
       var n = document.createElement("span");
       n.className = "lg-n " + (r.delta < 0 ? "minus" : "plus");
       n.textContent = (r.delta < 0 ? "−" : "+") + Math.abs(r.delta);
 
       row.appendChild(d); row.appendChild(txt); row.appendChild(n);
 
-      /* Начисление за урок снимается не записью в журнал, а отменой приёмки:
-         иначе приёмка и журнал разошлись бы — урок принят, а баллов нет.
-         Но искать этот урок в плане руками незачем: кнопка ведёт к нему
-         сама и сразу спрашивает про отмену приёмки, а баллы снимет база. */
+      /* Запись за урок. Сумма такой записи правится в окне приёмки —
+         там поле баллов, и база всё равно вернула бы её к той сумме.
+         Поэтому здесь одна кнопка: к уроку. У принятого урока она ещё
+         и спрашивает про снятие приёмки, а баллы снимет база. */
       if (r.source_type === "урок" && r.source_id && lessonOf(r.source_id)) {
         var uid = r.source_id, snyat = parentMode && isConfirmed(uid);
         var g = document.createElement("button");
         g.type = "button"; g.className = "lg-undo";
-        g.textContent = snyat ? "отменить" : "к уроку";
+        g.textContent = snyat ? "снять приёмку" : "к уроку";
         g.addEventListener("click", function () {
           lgDlg.close("");
-          if (PLANDAY[uid]) setDay(PLANDAY[uid]);
+          pokazatUrok(uid);
           if (snyat) toggle(uid);
-          else toast("Урок открыт в своём дне");
         });
         row.appendChild(g);
       }
 
-      if (parentMode && !undone[r.id] && !r.reverts_id && r.source_type !== "урок") {
+      /* Надбавки и ручные записи родитель правит и отменяет здесь.
+         Погашенную запись править нечего: сумма её уже ноль в итоге,
+         и правка только запутала бы, что с чем гасится. */
+      if (parentMode && r.source_type !== "урок" && !undone[r.id] && !r.reverts_id) {
+        var e = document.createElement("button");
+        e.type = "button"; e.className = "lg-undo"; e.textContent = "править";
+        e.addEventListener("click", function () { lgPravka(r); });
+        row.appendChild(e);
+
         var u = document.createElement("button");
         u.type = "button"; u.className = "lg-undo"; u.textContent = "отменить";
         u.addEventListener("click", function () {
@@ -1989,6 +2141,10 @@
       }
       list.appendChild(row);
     });
+
+    var pog = parentMode ? ledPogasheno() : 0;
+    lgEl("lgUborka").hidden = !pog;
+    if (pog) lgEl("lgUborka").textContent = "Убрать погашенные записи (" + pog + ")";
 
     var ost = sel.length - lgSkolko;
     if (ost > 0) {
@@ -2017,6 +2173,7 @@
        выглядит как потеря баллов. */
     lgQuery = ""; lgKind = "все"; lgSkolko = LG_SHAG;
     if (lgEl("lgQ")) lgEl("lgQ").value = "";
+    lgPravkaOff();
     lgChips();
     lgDlg.showModal();
     ledFull();
@@ -2047,15 +2204,25 @@
         lgSkolko += LG_SHAG; lgRender();
       });
     }
+    if (lgEl("lgModeOff")) lgEl("lgModeOff").addEventListener("click", lgPravkaOff);
+    if (lgEl("lgUborka")) lgEl("lgUborka").addEventListener("click", function () {
+      ledUborka();
+      lgDlg.close("");
+    });
+
     lgEl("lgAdd").addEventListener("click", function () {
       var n = Number(lgEl("lgDelta").value);
       var why = lgEl("lgReason").value.trim();
       if (!n || isNaN(n)) { toast("Введите число: со знаком минус — штраф"); return; }
       if (!why) { toast("Нужна причина — её увидит ребёнок"); return; }
-      ledPost([{ student: sid, currency: "study", delta: Math.round(n),
-                 reason: why, source_type: "ручное" }],
-              n < 0 ? "Списано" : "Начислено");
-      lgEl("lgDelta").value = ""; lgEl("lgReason").value = "";
+      if (lgEditId) {
+        ledPatch(lgEditId, { delta: Math.round(n), reason: why });
+      } else {
+        ledPost([{ student: sid, currency: "study", delta: Math.round(n),
+                   reason: why, source_type: "ручное" }],
+                n < 0 ? "Списано" : "Начислено");
+      }
+      lgPravkaOff();
       lgDlg.close("");
     });
   }
@@ -2498,6 +2665,8 @@
       + (lesson.k === "аттестация" ? " att" : "");
     el.setAttribute("role", "button");
     el.setAttribute("tabindex", "0");
+    /* Ключ урока на карточке — по нему журнал находит её и подсвечивает. */
+    el.setAttribute("data-id", id);
     el.setAttribute("aria-pressed", st === "done" ? "true" : "false");
 
     var tick = document.createElement("div");
