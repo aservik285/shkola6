@@ -128,6 +128,8 @@
   .needlogin p{margin:0;font-size:14px;line-height:1.45;color:var(--muted)}
   body.need-login .today-line,body.need-login .prog,body.need-login .summary,
   body.need-login .group,body.need-login .foot{display:none}
+  /* Тарифы читаются из базы от имени вошедшего: до входа кнопке нечего показать */
+  body.need-login #tfBtn{display:none}
 
   .pm-dlg{border:1px solid var(--line);border-radius:12px;padding:0;max-width:min(420px,calc(100vw - 32px));
     background:var(--sheet);color:var(--ink)}
@@ -212,6 +214,38 @@
   .lg-dlg .lg-hand input[type="text"]{flex:1;min-width:150px}
   .lg-dlg .empty{font-size:13px;color:var(--muted);padding:6px 2px}
 
+  /* окно тарифов: что сколько стоит. Видят все вошедшие, правит родитель */
+  .tf-dlg{max-width:min(560px,calc(100vw - 32px))}
+  .tf-dlg .tf-grp{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted);margin:12px 0 5px}
+  .tf-dlg .tf-grp:first-child{margin-top:0}
+  .tf-dlg .tf-row{display:flex;gap:8px;align-items:center;justify-content:space-between;
+    padding:7px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.35}
+  .tf-dlg .tf-row:last-child{border-bottom:0}
+  .tf-dlg .tf-nm{flex:1;min-width:0}
+  .tf-dlg .tf-nm b{display:block;color:var(--ink);font-size:13.5px}
+  .tf-dlg .tf-nm span{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+  .tf-dlg .tf-val{display:flex;gap:6px;align-items:center;flex:none}
+  .tf-dlg .tf-cell{display:flex;flex-direction:column;align-items:flex-end;gap:2px;min-width:62px}
+  .tf-dlg .tf-cell i{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;color:var(--muted)}
+  .tf-dlg .tf-cell b{font-size:15px;font-variant-numeric:tabular-nums}
+  .tf-dlg .tf-cell input{width:62px;min-height:38px;padding:7px 8px;text-align:right;
+    font:600 14px/1 inherit;font-variant-numeric:tabular-nums}
+  .tf-dlg .tf-skaz{font-size:12.5px;color:var(--muted);line-height:1.45;
+    border-top:1px solid var(--line);padding-top:10px;margin-top:4px}
+  .tf-dlg .tf-skaz b{color:var(--ink-2)}
+  .tf-dlg .tf-rule{font-size:12px;line-height:1.4;color:var(--ink-2);
+    background:var(--pen-soft);border-radius:8px;padding:8px 10px}
+  .tf-dlg .tf-err{font-size:12.5px;line-height:1.45;color:var(--red);
+    background:var(--red-soft);border:1px solid var(--red-line);border-radius:8px;padding:8px 10px}
+  .tf-dlg .tf-err ul{margin:4px 0 0;padding-left:18px}
+  .tf-dlg #tfSave{background:var(--green);border-color:var(--green);color:#fff}
+  @media (max-width:540px){
+    .tf-dlg .tf-row{flex-wrap:wrap}
+    .tf-dlg .tf-val{width:100%;justify-content:flex-end}
+  }
+
   /* всплывающая подсказка */
   .toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;
     background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:10px 14px;border-radius:8px;
@@ -288,6 +322,7 @@
       <select id="day" aria-label="Учебный день"></select>
       <button type="button" id="next" aria-label="Следующий день">›</button>
       <button type="button" id="todayBtn" class="wide">Сегодня</button>
+      <button type="button" id="tfBtn" class="wide">Тарифы</button>
       <button type="button" id="pmBtn" class="pm">Вход</button>
     </div>
   </div>
@@ -411,6 +446,33 @@
 
       <div class="acts">
         <button type="submit" id="lgClose">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Тарифы. Видит каждый вошедший: ребёнок должен знать цену урока до того,
+       как его сдаст, — это условие ТЗ. Правит их только родитель, и правит
+       одни суммы: границы шкал и привязка видов к тарифам меняются в SQL.
+       Окно открывается кнопкой «Тарифы» и адресом вида …/index.html#tarify,
+       чтобы ссылку можно было просто дать детям. -->
+  <dialog id="tfDlg" class="pm-dlg tf-dlg">
+    <form id="tfForm" method="dialog">
+      <h3>Сколько стоит урок</h3>
+      <p id="tfWhen"></p>
+
+      <div id="tfBody"></div>
+
+      <div id="tfEdit" hidden>
+        <p class="tf-rule">Правило из ТЗ: тарифы меняются с понедельника
+           и не задним числом. Уже начисленные баллы новая цена не пересчитывает.</p>
+        <div class="tf-err" id="tfErr" hidden></div>
+        <div class="acts">
+          <button type="button" id="tfSave">Сохранить тарифы</button>
+        </div>
+      </div>
+
+      <div class="acts">
+        <button type="submit" id="tfClose">Закрыть</button>
       </div>
     </form>
   </dialog>
@@ -857,6 +919,104 @@
      не нашёл. Подпись страница собирает заранее и кладёт в поля
      text и sub. */
 
+  /* ── Проверка правок тарифов ──
+     Родитель меняет цены прямо со страницы, и ошибиться проще всего
+     не опечаткой в одной цифре, а нарушением порядка: задержка дороже
+     срока, тройка дороже пятёрки. Расчёт от этого не падает — он молча
+     начинает платить за опоздание больше, чем за работу в срок,
+     и заметить это некому.
+
+     Поэтому правки проходят через проверку, а она живёт здесь, рядом
+     со самим расчётом, и покрыта тестами. Возвращает список понятных
+     строк: пустой — можно сохранять. */
+  function celoe(v) {
+    if (v === null || v === undefined || v === "") return null;
+    var n = Number(v);
+    if (isNaN(n) || n !== Math.floor(n)) return NaN;
+    return n;
+  }
+
+  function proverka(o) {
+    o = o || {};
+    var bedy = [];
+
+    /* Виды урока одной тарифной группы стоят одинаково, и страница правит
+       их вместе. Поэтому проверяем не каждый вид, а каждую различную цену:
+       иначе одна опечатка в «теории» давала бы три одинаковые жалобы —
+       на теорию, повторение и домашнее. */
+    var vidano = {};
+    (o.tariffs || []).forEach(function (r) {
+      var bonus_li = r.tariff === "бонус";
+      var kind = bonus_li ? (r.kind || "надбавка без названия")
+                          : (r.tariff || r.kind || "вид без названия");
+      var klyuch = kind + "|" + r.on_time + "|" + r.late_week + "|" + r.late_more;
+      if (vidano[klyuch]) return;
+      vidano[klyuch] = true;
+      var polya = bonus_li
+        ? [["«сколько даёт»", r.on_time]]
+        : [["«в срок»", r.on_time], ["«с задержкой до недели»", r.late_week],
+           ["«позже недели»", r.late_more]];
+      /* Пустая цена — норма для теста и аттестации: они считаются по шкале,
+         и в таблице у них стоит пустота. А вот половина заполненных полей —
+         уже ошибка: непонятно, сколько стоит урок с задержкой. */
+      var est = 0;
+      polya.forEach(function (p) {
+        if (p[1] !== null && p[1] !== undefined && p[1] !== "") est++;
+      });
+      if (est === 0) return;
+
+      var zn = {}, sboy = false;
+      polya.forEach(function (p) {
+        var n = celoe(p[1]);
+        if (isNaN(n)) { bedy.push(kind + ": " + p[0] + " — нужно целое число"); sboy = true; return; }
+        if (n === null) { bedy.push(kind + ": " + p[0] + " — пусто, а остальные цены заполнены"); sboy = true; return; }
+        if (n < 0) { bedy.push(kind + ": " + p[0] + " — баллы не бывают отрицательными"); sboy = true; return; }
+        zn[p[0]] = n;
+      });
+      if (sboy || bonus_li) return;
+      if (zn["«в срок»"] < zn["«с задержкой до недели»"]) {
+        bedy.push(kind + ": за задержку выходит больше, чем за работу в срок ("
+          + zn["«с задержкой до недели»"] + " против " + zn["«в срок»"] + ")");
+      }
+      if (zn["«с задержкой до недели»"] < zn["«позже недели»"]) {
+        bedy.push(kind + ": чем позже сдан урок, тем он дороже ("
+          + zn["«позже недели»"] + " против " + zn["«с задержкой до недели»"] + ")");
+      }
+    });
+
+    /* Шкалы теста и аттестации: чем лучше результат, тем не меньше баллов. */
+    var po = {};
+    (o.scale || []).forEach(function (r) {
+      var t = r.tariff || "шкала без названия";
+      if (!po[t]) po[t] = [];
+      po[t].push(r);
+    });
+    Object.keys(po).forEach(function (t) {
+      var rows = po[t], ok = [];
+      rows.forEach(function (r) {
+        var n = celoe(r.points);
+        if (isNaN(n) || n === null) {
+          bedy.push(t + ", ступень " + r.lo + ": нужно целое число баллов");
+          return;
+        }
+        if (n < 0) {
+          bedy.push(t + ", ступень " + r.lo + ": баллы не бывают отрицательными");
+          return;
+        }
+        ok.push({ lo: Number(r.lo), points: n });
+      });
+      ok.sort(function (a, b) { return a.lo - b.lo; });
+      for (var i = 1; i < ok.length; i++) {
+        if (ok[i].points < ok[i - 1].points) {
+          bedy.push(t + ": ступень " + ok[i].lo + " стоит меньше, чем ступень "
+            + ok[i - 1].lo + " (" + ok[i].points + " против " + ok[i - 1].points + ")");
+        }
+      }
+    });
+
+    return bedy;
+  }
+
   /* Что именно произошло в записи журнала — одной строчкой, человеческими
      словами. Смотрим на тип записи и на знак, а не только на текст причины:
      текст пишет база, и он может измениться, а знак — нет.
@@ -962,6 +1122,7 @@
     bonus: bonus,
     closed: closed,
     norm: norm,
+    proverka: proverka,
     dejstvie: dejstvie,
     otbor: otbor,
     itog: itog,
@@ -1408,10 +1569,16 @@
      Если журнала в базе ещё нет, всё молча выключается и трекер работает
      как на этапе 3. */
 
-  /* Первый день, за который идут баллы. Решение ТЗ: задним числом
-     не начисляем, стартовый баланс у обоих ноль. Дни раньше этой даты
-     в очередь начислений не попадают, сколько бы уроков в них ни закрыли. */
-  var LED_START = "2026-11-24";
+  /* Первый день, за который идут надбавки за закрытый день и закрытую
+     неделю. Дни раньше этой даты в очередь не попадают, сколько бы уроков
+     в них ни закрыли.
+
+     На баллы за сами уроки эта дата не влияет и влиять не может: за урок
+     начисляет триггер в базе, и дату он не знает. Начисляется всё, что
+     принято по-настоящему, начиная с выката 18 ноября 2026 года; прошлому
+     миграция поставила points = 0, так что задним числом не идёт ничего.
+     Решение родителя от 18 ноября: пусть копят с понедельника 16 ноября. */
+  var LED_START = "2026-11-16";
 
   var LED = [], BAL = { study: 0, task: 0 }, PAID = {}, LEDOK = false, ledJson = "";
 
@@ -1866,6 +2033,267 @@
     if (s) s.addEventListener("click", lgOpen);
     if (t) t.addEventListener("click", lgOpen);
     if (q) q.addEventListener("click", lgOpen);
+  })();
+
+  /* ── Тарифы: страница для всех и правка для родителя ──
+     Условие ТЗ: ребёнок знает цену урока до того, как его сдаст. Раньше
+     это предполагалось решить распечаткой на стене; решение родителя
+     18 ноября 2026 года — показывать прямо в трекере, по кнопке «Тарифы»
+     и по адресу …#tarify, чтобы ссылку можно было просто дать детям.
+
+     Правит суммы родитель, здесь же. Границы шкал (сколько процентов теста
+     на какую ступень) и привязку видов урока к тарифным группам со страницы
+     не изменить — они меняются в SQL. Неверная граница тихо искажает цену
+     всех тестов сразу, и это не та правка, которую делают между делом. */
+  var TF = { tariffs: [], scale: [] }, tfBusy = false, tfOk = false;
+  var tfDlg = document.getElementById("tfDlg");
+  function tfEl(n) { return document.getElementById(n); }
+
+  function tfPull() {
+    if (!sb || tfBusy) return;
+    tfBusy = true; tfRender();
+    tokenReady().then(function (t) {
+      if (!t) throw new Error("не вошли");
+      var h = sbHeaders(t, null);
+      return Promise.all([
+        fetch(sb.url + "/rest/v1/tariffs?select=*&order=tariff,kind", { headers: h }),
+        fetch(sb.url + "/rest/v1/tariff_scale?select=*&order=tariff,lo.desc", { headers: h })
+      ]);
+    }).then(function (rr) {
+      if (!rr[0].ok || !rr[1].ok) throw new Error("нет таблиц");
+      return Promise.all([rr[0].json(), rr[1].json()]);
+    }).then(function (dd) {
+      TF = { tariffs: dd[0] || [], scale: dd[1] || [] };
+      tfOk = true; tfBusy = false; tfRender();
+    }).catch(function () {
+      tfBusy = false; tfOk = false; tfRender();
+    });
+  }
+
+  /* Строка таблицы. cells — что показать справа: подпись, значение и ключ
+     поля ввода (пустой ключ — значение только для чтения). */
+  function tfRow(box, name, podpis, cells) {
+    var row = document.createElement("div");
+    row.className = "tf-row";
+    var nm = document.createElement("div");
+    nm.className = "tf-nm";
+    var b = document.createElement("b"); b.textContent = name; nm.appendChild(b);
+    if (podpis) {
+      var s = document.createElement("span"); s.textContent = podpis; nm.appendChild(s);
+    }
+    var val = document.createElement("div");
+    val.className = "tf-val";
+    cells.forEach(function (c) {
+      var cell = document.createElement("div");
+      cell.className = "tf-cell";
+      var lab = document.createElement("i"); lab.textContent = c.lab;
+      cell.appendChild(lab);
+      if (c.key && parentMode) {
+        var inp = document.createElement("input");
+        inp.type = "number"; inp.step = "5"; inp.min = "0";
+        inp.inputMode = "numeric";
+        inp.value = (c.value === null || c.value === undefined) ? "" : c.value;
+        inp.setAttribute("data-k", c.key);
+        cell.appendChild(inp);
+      } else {
+        var v = document.createElement("b");
+        v.textContent = (c.value === null || c.value === undefined || c.value === "")
+          ? "по шкале" : c.value;
+        cell.appendChild(v);
+      }
+      val.appendChild(cell);
+    });
+    row.appendChild(nm); row.appendChild(val);
+    box.appendChild(row);
+  }
+
+  function tfZagl(box, text) {
+    var h = document.createElement("div");
+    h.className = "tf-grp"; h.textContent = text;
+    box.appendChild(h);
+  }
+
+  /* Подпись ступени шкалы. В базе у ступеней есть note («21-24 из 24»,
+     «оценка 5») — она понятнее доли, поэтому берём её, а долю показываем
+     только когда примечания нет. */
+  function tfStupen(r) {
+    if (r.note) return String(r.note);
+    var lo = Number(r.lo);
+    if (r.tariff === "аттестация") return "оценка " + lo;
+    return "от " + Math.round(lo * 100) + "% верных";
+  }
+
+  function tfRender() {
+    if (!tfDlg) return;
+    var body = tfEl("tfBody"), when = tfEl("tfWhen");
+    body.innerHTML = "";
+    tfEl("tfEdit").hidden = !(parentMode && tfOk);
+    tfEl("tfErr").hidden = true;
+
+    if (!tfOk) {
+      when.textContent = "";
+      body.innerHTML = '<div class="empty">' + (tfBusy
+        ? "Открываю тарифы…"
+        : "Тарифы не открылись. Нужен вход и связь с базой.") + "</div>";
+      return;
+    }
+
+    /* Когда цены менялись последний раз. Дату ставит база, не страница. */
+    var last = "";
+    TF.tariffs.concat(TF.scale).forEach(function (r) {
+      if (r.updated_at && r.updated_at > last) last = r.updated_at;
+    });
+    when.textContent = last
+      ? "Цены изменены " + ledDate(last) + ". Начисленные баллы не пересчитываются."
+      : "Цены не менялись с запуска системы.";
+
+    /* Группы тарифов. Виды урока с одинаковой группой стоят одинаково —
+       показываем и правим их вместе, иначе у «практики» и «речи» цены
+       разъехались бы при первой же правке. */
+    var grp = {}, ord = [];
+    TF.tariffs.forEach(function (r) {
+      if (!grp[r.tariff]) { grp[r.tariff] = []; ord.push(r.tariff); }
+      grp[r.tariff].push(r);
+    });
+
+    var poShkale = {}, bonusy = [], obychnye = [];
+    ord.forEach(function (t) {
+      if (t === "бонус") { bonusy = grp[t]; return; }
+      var est = false;
+      grp[t].forEach(function (r) {
+        if (r.on_time !== null || r.late_week !== null || r.late_more !== null) est = true;
+      });
+      if (est) obychnye.push(t); else poShkale[t] = grp[t];
+    });
+
+    tfZagl(body, "За сданный урок");
+    obychnye.forEach(function (t) {
+      var vidy = grp[t].map(function (r) { return r.kind; });
+      var r0 = grp[t][0];
+      tfRow(body, t.charAt(0).toUpperCase() + t.slice(1),
+            vidy.length > 1 ? vidy.join(", ") : null,
+            [{ lab: "в срок",  value: r0.on_time,   key: "t|" + t + "|on_time" },
+             { lab: "до недели", value: r0.late_week, key: "t|" + t + "|late_week" },
+             { lab: "позже",   value: r0.late_more, key: "t|" + t + "|late_more" }]);
+    });
+
+    /* Тест и аттестация: цена по ступеням, в tariffs у них пусто. */
+    Object.keys(poShkale).forEach(function (t) {
+      var rows = TF.scale.filter(function (r) { return r.tariff === t; });
+      if (!rows.length) return;
+      tfZagl(body, t.charAt(0).toUpperCase() + t.slice(1));
+      rows.forEach(function (r) {
+        tfRow(body, tfStupen(r), null,
+              [{ lab: "баллов", value: r.points, key: "s|" + t + "|" + r.lo }]);
+      });
+    });
+
+    if (bonusy.length) {
+      tfZagl(body, "Надбавки");
+      bonusy.forEach(function (r) {
+        tfRow(body, r.kind.charAt(0).toUpperCase() + r.kind.slice(1), r.note || null,
+              [{ lab: "баллов", value: r.on_time, key: "k|" + r.kind + "|on_time" }]);
+      });
+    }
+
+    var sk = document.createElement("div");
+    sk.className = "tf-skaz";
+    sk.innerHTML = "<b>Задержка считается от дня, на который урок стоял"
+      + " в расписании, до дня, когда он отправлен на проверку.</b> Сколько"
+      + " родитель продержал урок на проверке, на цену не влияет."
+      + " Баллы начисляются при приёмке; за день и за неделю без долгов"
+      + " надбавку начисляет родитель отдельно.";
+    body.appendChild(sk);
+  }
+
+  /* Собрать правки в строки для базы. Значения групп раскладываются
+     по всем видам группы, чтобы «практика» и «речь» остались равны. */
+  function tfSobrat() {
+    var vals = {}, ii = tfEl("tfBody").getElementsByTagName("input");
+    for (var i = 0; i < ii.length; i++) vals[ii[i].getAttribute("data-k")] = ii[i].value;
+    function vzyat(key, old) {
+      if (!Object.prototype.hasOwnProperty.call(vals, key)) return old;
+      var v = vals[key];
+      return v === "" ? null : Number(v);
+    }
+    var tariffs = TF.tariffs.map(function (r) {
+      var o = { kind: r.kind, tariff: r.tariff, on_time: r.on_time,
+                late_week: r.late_week, late_more: r.late_more, note: r.note };
+      ["on_time", "late_week", "late_more"].forEach(function (f) {
+        o[f] = vzyat("k|" + r.kind + "|" + f, vzyat("t|" + r.tariff + "|" + f, o[f]));
+      });
+      return o;
+    });
+    var scale = TF.scale.map(function (r) {
+      return { tariff: r.tariff, lo: r.lo, note: r.note,
+               points: vzyat("s|" + r.tariff + "|" + r.lo, r.points) };
+    });
+    return { tariffs: tariffs, scale: scale };
+  }
+
+  function tfOshibki(bedy) {
+    var box = tfEl("tfErr");
+    if (!bedy.length) { box.hidden = true; box.innerHTML = ""; return; }
+    box.hidden = false;
+    box.innerHTML = "";
+    box.appendChild(document.createTextNode("Так сохранять нельзя:"));
+    var ul = document.createElement("ul");
+    bedy.forEach(function (s) {
+      var li = document.createElement("li"); li.textContent = s; ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  }
+
+  function tfSave() {
+    if (!sb || !parentMode) return;
+    var d = tfSobrat();
+    /* Проверка живёт в bally.js и покрыта тестами: «задержка дороже срока»
+       расчёт не ломает, он просто начинает платить за опоздание больше. */
+    var bedy = window.BALLY ? window.BALLY.proverka(d) : [];
+    if (bedy.length) { tfOshibki(bedy); return; }
+    tfOshibki([]);
+
+    tokenReady().then(function (t) {
+      if (!t) { toast("Войдите, чтобы менять тарифы"); return null; }
+      var h = sbHeaders(t, { "Content-Type": "application/json",
+                             "Prefer": "resolution=merge-duplicates,return=minimal" });
+      return Promise.all([
+        fetch(sb.url + "/rest/v1/tariffs?on_conflict=kind",
+              { method: "POST", headers: h, body: JSON.stringify(d.tariffs) }),
+        fetch(sb.url + "/rest/v1/tariff_scale?on_conflict=tariff,lo",
+              { method: "POST", headers: h, body: JSON.stringify(d.scale) })
+      ]).then(function (rr) {
+        if (!rr[0].ok || !rr[1].ok) throw new Error(rr[0].status + "/" + rr[1].status);
+        toast("Тарифы сохранены");
+        /* Перечитываем тарифы в расчёт, иначе до перезагрузки страницы
+           приёмка считала бы по старым ценам. */
+        if (window.BALLY) {
+          window.BALLY.fetchTariffs(CFG, t).then(function () { render(); });
+        }
+        tfPull();
+      });
+    }).catch(function () {
+      tfOshibki(["База не приняла правку. Проверьте связь и войдите заново."]);
+    });
+  }
+
+  function tfOpen() {
+    if (!tfDlg || !tfDlg.showModal) return;
+    if (!tfDlg.open) tfDlg.showModal();
+    tfPull();
+  }
+
+  (function () {
+    var b = document.getElementById("tfBtn");
+    if (b) b.addEventListener("click", tfOpen);
+    if (tfEl("tfSave")) tfEl("tfSave").addEventListener("click", tfSave);
+    /* Ссылка …#tarify открывает окно сразу: её можно дать детям,
+       не объясняя, где искать кнопку. Задержка нужна, чтобы к этому
+       моменту уже прошёл вход: без него тарифы из базы не прочитать. */
+    if (location.hash === "#tarify") setTimeout(tfOpen, 400);
+    window.addEventListener("hashchange", function () {
+      if (location.hash === "#tarify") tfOpen();
+    });
   })();
 
   /* ── Хранилище ──
