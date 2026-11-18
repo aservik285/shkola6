@@ -184,8 +184,23 @@
   .lg-dlg .lg-row .lg-n{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
   .lg-dlg .lg-row .lg-n.plus{color:var(--green)}
   .lg-dlg .lg-row .lg-n.minus{color:var(--red)}
-  .lg-dlg .lg-row.undone .lg-r{text-decoration:line-through;color:var(--muted)}
+  .lg-dlg .lg-row .lg-t{display:block;color:var(--ink)}
+  .lg-dlg .lg-row .lg-t b{font-weight:700}
+  .lg-dlg .lg-row .lg-s{display:block;margin-top:1px;font-size:11.5px;color:var(--muted)}
+  .lg-dlg .lg-row.undone .lg-t{text-decoration:line-through;color:var(--muted)}
+  .lg-dlg .lg-row.undone .lg-t b{color:var(--muted)}
   .lg-dlg .lg-undo{font:600 11px/1 inherit;padding:5px 7px;min-height:0;border-radius:6px}
+
+  /* поиск и фильтры: записей за год сотни, без них журнал нечитаем */
+  .lg-dlg .lg-find{display:flex;flex-direction:column;gap:7px}
+  .lg-dlg .lg-find input[type="search"]{width:100%;box-sizing:border-box;
+    -webkit-appearance:none;appearance:none}
+  .lg-dlg .lg-chips{display:flex;gap:5px;flex-wrap:wrap}
+  .lg-dlg .lg-chip{font:600 11.5px/1 inherit;padding:7px 10px;min-height:0;
+    border-radius:999px;color:var(--muted);background:var(--sheet-2)}
+  .lg-dlg .lg-chip.on{background:var(--pen);border-color:var(--pen);color:#fff}
+  .lg-dlg .lg-stat{font-size:11.5px;color:var(--muted);min-height:14px}
+  .lg-dlg .lg-more{font:600 12px/1 inherit;padding:9px 10px;min-height:0;width:100%}
   .lg-dlg .lg-todo{display:flex;flex-direction:column;gap:6px;border:1px solid var(--green);
     background:var(--green-soft);border-radius:8px;padding:8px}
   .lg-dlg .lg-todo .lg-row{align-items:center}
@@ -368,7 +383,25 @@
         <div id="lgTodoList"></div>
       </div>
 
+      <!-- Поиск идёт по человеческой подписи записи: предмет, тема, вид урока,
+           причина, дата, сумма. Слова можно вводить в любом порядке и обрывать:
+           «мат дроб» находит математику про дроби. -->
+      <div class="lg-find">
+        <input type="search" id="lgQ" autocomplete="off"
+               placeholder="Поиск: предмет, тема, причина, дата">
+        <div class="lg-chips" id="lgChips">
+          <button type="button" class="lg-chip on" data-k="все">Все</button>
+          <button type="button" class="lg-chip" data-k="плюс">Начислено</button>
+          <button type="button" class="lg-chip" data-k="минус">Снято</button>
+          <button type="button" class="lg-chip" data-k="урок">За уроки</button>
+          <button type="button" class="lg-chip" data-k="бонус">Дни и недели</button>
+          <button type="button" class="lg-chip" data-k="ручное">От родителя</button>
+        </div>
+        <div class="lg-stat" id="lgStat"></div>
+      </div>
+
       <div class="lg-list" id="lgList"></div>
+      <button type="button" class="lg-more" id="lgMore" hidden>Показать ещё</button>
 
       <div class="lg-hand" id="lgHand" hidden>
         <label>Баллов <input type="number" id="lgDelta" step="5" inputmode="numeric" placeholder="−50"></label>
@@ -812,6 +845,90 @@
     return out;
   }
 
+  /* ── Поиск по журналу ──
+     За учебный год на одного ребёнка набегает под четыреста записей:
+     урок, день, неделя, поощрение. Глазами в таком списке не найти
+     ничего, поэтому у журнала есть поиск и кнопки-фильтры.
+
+     Отбор живёт здесь, рядом с остальным счётом баллов: страница только
+     рисует то, что он вернул, а проверки гоняют его без браузера.
+     Ищем по готовой подписи записи, а не по причине из базы: в причине
+     стоит служебное «mat:30», и поиск по слову «математика» её бы
+     не нашёл. Подпись страница собирает заранее и кладёт в поля
+     text и sub. */
+
+  /* Что именно произошло в записи журнала — одной строчкой, человеческими
+     словами. Смотрим на тип записи и на знак, а не только на текст причины:
+     текст пишет база, и он может измениться, а знак — нет.
+
+     reverts_id у записи означает «эта запись отменяет ту»: отмена идёт
+     встречной строкой, история никогда не переписывается. */
+  function dejstvie(r) {
+    r = r || {};
+    var s = String(r.reason === null || r.reason === undefined ? "" : r.reason);
+    if (r.source_type === "ручное") {
+      if (r.reverts_id) return "запись отменена";
+      return r.delta < 0 ? "штраф от родителя" : "поощрение от родителя";
+    }
+    /* Приёмку поправили — база сама дописала разницу, в плюс или в минус. */
+    if (s.indexOf("пересчёт") >= 0) return "баллы пересчитаны";
+    if (r.reverts_id || r.delta < 0) return "начисление отменено";
+    if (r.source_type === "урок") return "урок принят";
+    return "начислено";
+  }
+
+  /* Регистр и «ё» в поиске не значат ничего: ребёнок ищет «алгебра»,
+     а не «Алгебра», и пишет «еще» вместо «ещё». */
+  function norm(s) {
+    return String(s === null || s === undefined ? "" : s)
+      .toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
+  }
+
+  /* Что попадает в каждую кнопку-фильтр. «бонус» — дни и недели без долгов:
+     начисляются они одной кнопкой и искать их удобнее вместе. */
+  var VIDY = {
+    "все":    function () { return true; },
+    "плюс":   function (r) { return r.delta > 0; },
+    "минус":  function (r) { return r.delta < 0; },
+    "урок":   function (r) { return r.source_type === "урок"; },
+    "бонус":  function (r) { return r.source_type === "день" || r.source_type === "неделя"; },
+    "ручное": function (r) { return r.source_type === "ручное"; }
+  };
+
+  /* Слова запроса ищутся все и в любом порядке: «мат дроб» находит
+     математику про дроби, не требуя помнить формулировку темы. */
+  function otbor(rows, o) {
+    o = o || {};
+    var vid = VIDY[o.kind] || VIDY["все"];
+    var slova = [];
+    norm(o.q).split(" ").forEach(function (w) { if (w) slova.push(w); });
+    var out = [];
+    (rows || []).forEach(function (r) {
+      if (!vid(r)) return;
+      if (slova.length) {
+        var seno = norm([r.text, r.sub, r.reason, r.date, r.delta].join(" "));
+        for (var i = 0; i < slova.length; i++) {
+          if (seno.indexOf(slova[i]) < 0) return;
+        }
+      }
+      out.push(r);
+    });
+    return out;
+  }
+
+  /* Итог по отобранному. Отменённое остаётся в сумме обеими строками —
+     и начислением, и отменой: иначе сумма журнала перестала бы сходиться
+     с балансом, а он считается именно как сумма всех записей. */
+  function itog(rows) {
+    var plus = 0, minus = 0, n = 0;
+    (rows || []).forEach(function (r) {
+      var d = Number(r.delta) || 0;
+      n++;
+      if (d > 0) plus += d; else minus += d;
+    });
+    return { plus: plus, minus: minus, sum: plus + minus, n: n };
+  }
+
   /* Тарифы из базы. Читают их все вошедшие, поэтому отдельного права
      не нужно — хватает токена сессии. Молчание базы не ошибка:
      остаются запасные значения.
@@ -844,6 +961,10 @@
     kindTariff: kindTariff,
     bonus: bonus,
     closed: closed,
+    norm: norm,
+    dejstvie: dejstvie,
+    otbor: otbor,
+    itog: itog,
     late: late,
     count: count,
     plural: plural
@@ -1298,32 +1419,61 @@
   function ledWho() { return "?student=eq." + encodeURIComponent(sid); }
   function bonusOf(name) { return window.BALLY ? window.BALLY.bonus(name) : (name === "неделя" ? 500 : 100); }
 
-  /* Три запроса за раз: баланс (сумма по всему журналу), последние записи
-     для показа и список уже оплаченных дней и недель. Последний нужен
-     отдельно: показываем мы шестьдесят записей, а начисления за дни могут
-     уйти далеко за этот предел, и очередь начала бы предлагать оплаченное. */
+  /* По таймеру тянем только то, что нужно панели под шапкой: баланс
+     (сумма по всему журналу) и список уже начисленных дней и недель —
+     без него очередь предлагала бы начислить оплаченное.
+
+     Сами записи журнала здесь не нужны: панель их не показывает,
+     а окно журнала грузит их целиком при открытии (ledFull). Так опрос
+     остаётся лёгким, а поиск идёт по всем записям, а не по последним
+     шестидесяти — иначе «ничего не найдено» означало бы просто
+     «не попало в хвост». */
   function ledPull(t) {
     var h = sbHeaders(t, null), who = ledWho();
     var tipy = "&source_type=in.(" + encodeURIComponent("день") + "," + encodeURIComponent("неделя") + ")";
     return Promise.all([
       fetch(sb.url + "/rest/v1/balances" + who + "&select=currency,balance", { headers: h }),
-      fetch(ledUrl(who + "&select=*&order=id.desc&limit=60"), { headers: h }),
       fetch(ledUrl(who + "&select=source_type,source_id&delta=gt.0" + tipy), { headers: h })
     ]).then(function (rr) {
-      if (!rr[0].ok || !rr[1].ok || !rr[2].ok) throw new Error("журнала нет");
-      return Promise.all([rr[0].json(), rr[1].json(), rr[2].json()]);
+      if (!rr[0].ok || !rr[1].ok) throw new Error("журнала нет");
+      return Promise.all([rr[0].json(), rr[1].json()]);
     }).then(function (dd) {
       var b = { study: 0, task: 0 };
       (dd[0] || []).forEach(function (r) { b[r.currency] = r.balance; });
       var p = {};
-      (dd[2] || []).forEach(function (r) { p[r.source_type + "|" + r.source_id] = true; });
-      var j = JSON.stringify([b, dd[1], p]);
+      (dd[1] || []).forEach(function (r) { p[r.source_type + "|" + r.source_id] = true; });
+      var j = JSON.stringify([b, p]);
       LEDOK = true;
       if (j === ledJson) return;
-      ledJson = j; BAL = b; LED = dd[1] || []; PAID = p;
+      ledJson = j; BAL = b; PAID = p;
       render();
     }).catch(function () {
       if (LEDOK) { LEDOK = false; render(); }
+    });
+  }
+
+  /* Весь журнал ребёнка или выбранного ученика — одной выборкой, при
+     открытии окна. Тысяча записей с запасом покрывает учебный год;
+     если когда-нибудь упрёмся в предел, видно будет сразу — записи
+     в окне идут от свежих к старым. */
+  var ledBusy = false, LEDFRESH = false;
+  function ledFull() {
+    if (!sb || ledBusy) return;
+    ledBusy = true;
+    lgRender();
+    tokenReady().then(function (t) {
+      if (!t) throw new Error("не вошли");
+      return fetch(ledUrl(ledWho() + "&select=*&order=id.desc&limit=1000"),
+                   { headers: sbHeaders(t, null) });
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    }).then(function (rows) {
+      LED = rows || []; LEDFRESH = true; ledBusy = false;
+      lgRender();
+    }).catch(function () {
+      ledBusy = false; LEDFRESH = false;
+      lgRender();
     });
   }
 
@@ -1365,9 +1515,8 @@
       paid: PAID
     });
     return rows.map(function (r) {
-      var label = r.kind === "неделя"
-        ? "неделя " + (r.week + 1) + " · " + shortHuman(r.first) + " — " + shortHuman(r.last)
-        : shortHuman(r.id);
+      var n = r.kind === "неделя" ? nedelya(r.id) : null;
+      var label = n ? n.name.toLowerCase() + " · " + n.range : shortHuman(r.id);
       return { kind: r.kind, id: r.id, points: bonusOf(r.kind), label: label };
     });
   }
@@ -1400,6 +1549,110 @@
     var d = new Date(s);
     if (isNaN(d.getTime())) return "";
     return d.getDate() + " " + MONTHS[d.getMonth()].slice(0, 3);
+  }
+  /* Полная дата записи нужна поиску: по строке «24 ноя» ищут редко,
+     а «24 ноября» — обычное дело. */
+  function ledDateFull(s) {
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return "";
+    return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear();
+  }
+
+  /* ── Расшифровка записи ──
+     В базе причина записана служебно: «принят урок mat:30». Триггер иначе
+     и не может — он знает только ключ урока. Названия предметов, темы
+     и расписание лежат на странице, поэтому ключ разворачивается здесь,
+     в человеческую подпись: «Математика — Сложение дробей», а под ней
+     мелким — что именно произошло и когда этот урок стоял по плану.
+
+     Ключ всё равно остаётся доступен: он виден в подсказке строки
+     (title), чтобы при разборе непонятного случая было за что взяться. */
+
+  /* Что произошло — одной строчкой. Живёт в bally.js: правило «минус
+     и reverts_id — это отмена, а не штраф» стоит проверять, а не помнить. */
+  function ledAct(r) { return window.BALLY.dejstvie(r); }
+
+  /* Номер недели и её границы по первому дню — он и есть source_id записи.
+     Границы считаем по учебным дням, а не календарным: неделя закрывается
+     вместе с воскресеньем, но писать «вс 29 ноя» в подписи незачем —
+     уроков в этот день не было. */
+  function nedelya(first) {
+    var w = WEEKOF[first], a = null, b = null;
+    DATA.days.forEach(function (d) {
+      if (WEEKOF[d] !== w) return;
+      if (!(EFF[d] || []).length) return;
+      if (a === null) a = d;
+      b = d;
+    });
+    if (a === null) { a = first; b = first; }
+    return { name: (w === null || w === undefined) ? "Неделя" : "Неделя " + (w + 1),
+             range: shortHuman(a) + " — " + shortHuman(b) };
+  }
+
+  function ledText(r) {
+    var key = r.source_id, act = ledAct(r);
+    if (r.source_type === "урок" && key) {
+      var L = lessonOf(key), code = key.split(":")[0];
+      if (!L) {
+        return { text: "Урок " + key, sub: act + " · этого урока нет в плане",
+                 subj: null };
+      }
+      var name = (DATA.subj[L.s] && DATA.subj[L.s].n) || L.s;
+      var plan = PLANDAY[key];
+      var sub = act + " · " + (plan ? "по плану " + shortHuman(plan) : "вне расписания");
+      if (L.k) sub += " · " + L.k;
+      return { text: name + " — " + L.t, sub: sub, subj: L.s || code, name: name };
+    }
+    if (r.source_type === "день" && key) {
+      return { text: "День без долгов — " + human(key),
+               sub: act + " · все уроки этого дня приняты", subj: null };
+    }
+    if (r.source_type === "неделя" && key) {
+      var n = nedelya(key);
+      return { text: n.name + " без долгов",
+               sub: act + " · " + n.range + " · все уроки недели приняты", subj: null };
+    }
+    /* Ручная запись и всё, что появится на этапах магазина и заданий:
+       причина там написана человеком или для человека, её и показываем. */
+    return { text: String(r.reason || "Запись"),
+             sub: act + (r.source_type && r.source_type !== "ручное" ? " · " + r.source_type : ""),
+             subj: null };
+  }
+
+  /* Записи журнала с готовыми подписями — в этом виде их отбирает bally.js
+     и в этом же виде они рисуются. */
+  function ledRows() {
+    return LED.map(function (r) {
+      var L = ledText(r);
+      return { r: r, text: L.text, sub: L.sub, subj: L.subj, name: L.name,
+               reason: r.reason, delta: r.delta, source_type: r.source_type,
+               reverts_id: r.reverts_id, date: ledDateFull(r.created_at) };
+    });
+  }
+
+  /* ── Поиск и постраничный показ ── */
+  var LG_SHAG = 25;
+  var lgKind = "все", lgQuery = "", lgSkolko = LG_SHAG;
+
+  /* Тысячи разделяем неразрывным пробелом: «1 750» не должно переноситься
+     на две строки в узкой строке итога. */
+  var NBSP = String.fromCharCode(160);
+  function nfmt(n) {
+    var s = String(Math.abs(n)), out = "";
+    while (s.length > 3) { out = NBSP + s.slice(-3) + out; s = s.slice(0, -3); }
+    return (n < 0 ? "−" : "") + s + out;
+  }
+
+  function lgStat(vsego, sel) {
+    var it = window.BALLY.itog(sel);
+    var otobrano = (lgQuery || lgKind !== "все");
+    var head = otobrano
+      ? (sel.length ? "Найдено " + sel.length + " из " + vsego : "Ничего не нашлось · всего записей " + vsego)
+      : "Записей " + vsego;
+    if (!sel.length) return head;
+    return head + " · начислено " + nfmt(it.plus)
+      + (it.minus ? ", снято " + nfmt(it.minus) : "")
+      + " · итог " + nfmt(it.sum);
   }
 
   function lgRender() {
@@ -1434,28 +1687,66 @@
     });
 
     /* История. Отменённые записи зачёркнуты: видно и начисление, и его отмену. */
-    var list = lgEl("lgList");
+    var list = lgEl("lgList"), stat = lgEl("lgStat"), more = lgEl("lgMore");
     list.innerHTML = "";
+    more.hidden = true;
+    lgEl("lgHand").hidden = !parentMode;
+
+    if (!LED.length) {
+      stat.textContent = "";
+      list.innerHTML = '<div class="empty">' + (
+        ledBusy ? "Открываю журнал…"
+        : LEDFRESH ? "Пока ничего не начислено. Баллы идут с " + human(LED_START) + "."
+        : "Журнал не открылся — проверьте связь и загляните ещё раз."
+      ) + "</div>";
+      return;
+    }
+
     var undone = {};
     LED.forEach(function (r) { if (r.reverts_id) undone[r.reverts_id] = true; });
 
-    if (!LED.length) {
-      list.innerHTML = '<div class="empty">Пока ничего не начислено. Баллы идут с ' +
-        human(LED_START) + '.</div>';
+    var vse = ledRows();
+    var sel = window.BALLY.otbor(vse, { q: lgQuery, kind: lgKind });
+    stat.textContent = lgStat(vse.length, sel);
+
+    if (!sel.length) {
+      list.innerHTML = '<div class="empty">По этому запросу записей нет. ' +
+        'Попробуйте короче — например «мат» или «тест».</div>';
+      return;
     }
-    LED.forEach(function (r) {
+
+    sel.slice(0, lgSkolko).forEach(function (q) {
+      var r = q.r;
       var row = document.createElement("div");
       row.className = "lg-row" + (undone[r.id] ? " undone" : "");
+      row.title = (r.source_type ? r.source_type + " " : "") + (r.source_id || "")
+        + " · " + (r.reason || "");
 
       var d = document.createElement("span");
       d.className = "lg-d"; d.textContent = ledDate(r.created_at);
 
       var txt = document.createElement("span");
-      txt.className = "lg-r"; txt.textContent = r.reason;
+      txt.className = "lg-r";
+      var t = document.createElement("span");
+      t.className = "lg-t";
+      /* Предмет выделен его же цветом, что и в расписании: так строка
+         журнала узнаётся раньше, чем прочитана. */
+      if (q.subj && q.name) {
+        var b = document.createElement("b");
+        b.textContent = q.name;
+        b.style.color = "var(--a-" + q.subj + ")";
+        t.appendChild(b);
+        t.appendChild(document.createTextNode(q.text.slice(q.name.length)));
+      } else {
+        t.textContent = q.text;
+      }
+      var s = document.createElement("span");
+      s.className = "lg-s"; s.textContent = q.sub;
+      txt.appendChild(t); txt.appendChild(s);
 
       var n = document.createElement("span");
       n.className = "lg-n " + (r.delta < 0 ? "minus" : "plus");
-      n.textContent = (r.delta > 0 ? "+" : "") + r.delta;
+      n.textContent = (r.delta < 0 ? "−" : "+") + Math.abs(r.delta);
 
       row.appendChild(d); row.appendChild(txt); row.appendChild(n);
 
@@ -1477,16 +1768,63 @@
       list.appendChild(row);
     });
 
-    lgEl("lgHand").hidden = !parentMode;
+    var ost = sel.length - lgSkolko;
+    if (ost > 0) {
+      more.hidden = false;
+      more.textContent = ost > LG_SHAG
+        ? "Показать ещё " + LG_SHAG + " · осталось " + ost
+        : "Показать ещё " + ost;
+    }
+  }
+
+  /* Кнопки-фильтры. Нажатая подсвечена, остальные нет — иначе непонятно,
+     почему в журнале видна только часть записей. */
+  function lgChips() {
+    var box = lgEl("lgChips");
+    if (!box) return;
+    var bb = box.getElementsByTagName("button");
+    for (var i = 0; i < bb.length; i++) {
+      bb[i].className = "lg-chip" + (bb[i].getAttribute("data-k") === lgKind ? " on" : "");
+    }
   }
 
   function lgOpen() {
     if (!lgDlg || !lgDlg.showModal) { toast("Журнал: " + BAL.study + " за учёбу, " + BAL.task + " за задания"); return; }
-    lgRender();
+    /* Открываем всегда с чистого листа: прошлый поиск к новому вопросу
+       отношения не имеет, а пустой журнал из-за забытого фильтра
+       выглядит как потеря баллов. */
+    lgQuery = ""; lgKind = "все"; lgSkolko = LG_SHAG;
+    if (lgEl("lgQ")) lgEl("lgQ").value = "";
+    lgChips();
     lgDlg.showModal();
+    ledFull();
+    lgRender();
   }
 
   if (lgDlg) {
+    var lgQi = lgEl("lgQ");
+    if (lgQi) {
+      lgQi.addEventListener("input", function () {
+        lgQuery = lgQi.value; lgSkolko = LG_SHAG; lgRender();
+      });
+      /* Enter внутри form method="dialog" закрыл бы окно. В поиске это
+         первое, что нажимают, поэтому перехватываем. */
+      lgQi.addEventListener("keydown", function (e) {
+        if (e.keyCode === 13 || e.key === "Enter") { e.preventDefault(); lgRender(); }
+      });
+    }
+    if (lgEl("lgChips")) {
+      lgEl("lgChips").addEventListener("click", function (e) {
+        var k = e.target && e.target.getAttribute && e.target.getAttribute("data-k");
+        if (!k) return;
+        lgKind = k; lgSkolko = LG_SHAG; lgChips(); lgRender();
+      });
+    }
+    if (lgEl("lgMore")) {
+      lgEl("lgMore").addEventListener("click", function () {
+        lgSkolko += LG_SHAG; lgRender();
+      });
+    }
     lgEl("lgAdd").addEventListener("click", function () {
       var n = Number(lgEl("lgDelta").value);
       var why = lgEl("lgReason").value.trim();
@@ -1623,7 +1961,7 @@
       marks = {}; LM = {};
       /* Журнал — величина ученика, а не страницы: при смене ленты он должен
          обнулиться, иначе на чужом балансе мелькнёт предыдущий. */
-      LED = []; BAL = { study: 0, task: 0 }; PAID = {}; ledJson = "";
+      LED = []; BAL = { study: 0, task: 0 }; PAID = {}; ledJson = ""; LEDFRESH = false;
       pull(true);
       pullEdits();
       poll = setInterval(function () { if (!document.hidden) { pull(false); pullEdits(); } }, 12000);
