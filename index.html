@@ -1433,15 +1433,22 @@
     var tipy = "&source_type=in.(" + encodeURIComponent("день") + "," + encodeURIComponent("неделя") + ")";
     return Promise.all([
       fetch(sb.url + "/rest/v1/balances" + who + "&select=currency,balance", { headers: h }),
-      fetch(ledUrl(who + "&select=source_type,source_id&delta=gt.0" + tipy), { headers: h })
+      fetch(ledUrl(who + "&select=source_type,source_id,delta" + tipy), { headers: h })
     ]).then(function (rr) {
       if (!rr[0].ok || !rr[1].ok) throw new Error("журнала нет");
       return Promise.all([rr[0].json(), rr[1].json()]);
     }).then(function (dd) {
       var b = { study: 0, task: 0 };
       (dd[0] || []).forEach(function (r) { b[r.currency] = r.balance; });
-      var p = {};
-      (dd[1] || []).forEach(function (r) { p[r.source_type + "|" + r.source_id] = true; });
+      /* «День оплачен» — это не «есть запись», а «сумма по дню больше нуля».
+         Отменённый день снова попадает в очередь: родитель начислил, заметил
+         неотмеченный урок, отменил — а когда урок принят, начисляет снова. */
+      var sum = {}, p = {};
+      (dd[1] || []).forEach(function (r) {
+        var k = r.source_type + "|" + r.source_id;
+        sum[k] = (sum[k] || 0) + (Number(r.delta) || 0);
+      });
+      Object.keys(sum).forEach(function (k) { if (sum[k] > 0) p[k] = true; });
       var j = JSON.stringify([b, p]);
       LEDOK = true;
       if (j === ledJson) return;
@@ -1750,9 +1757,24 @@
 
       row.appendChild(d); row.appendChild(txt); row.appendChild(n);
 
-      /* Начисление за урок отменяется не здесь, а в самой карточке:
-         снять приёмку — и база уберёт баллы сама. Иначе journal и приёмка
-         разошлись бы: урок принят, а баллов нет. */
+      /* Начисление за урок снимается не записью в журнал, а отменой приёмки:
+         иначе приёмка и журнал разошлись бы — урок принят, а баллов нет.
+         Но искать этот урок в плане руками незачем: кнопка ведёт к нему
+         сама и сразу спрашивает про отмену приёмки, а баллы снимет база. */
+      if (r.source_type === "урок" && r.source_id && lessonOf(r.source_id)) {
+        var uid = r.source_id, snyat = parentMode && isConfirmed(uid);
+        var g = document.createElement("button");
+        g.type = "button"; g.className = "lg-undo";
+        g.textContent = snyat ? "отменить" : "к уроку";
+        g.addEventListener("click", function () {
+          lgDlg.close("");
+          if (PLANDAY[uid]) setDay(PLANDAY[uid]);
+          if (snyat) toggle(uid);
+          else toast("Урок открыт в своём дне");
+        });
+        row.appendChild(g);
+      }
+
       if (parentMode && !undone[r.id] && !r.reverts_id && r.source_type !== "урок") {
         var u = document.createElement("button");
         u.type = "button"; u.className = "lg-undo"; u.textContent = "отменить";
